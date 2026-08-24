@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MakeCode Arcade — Задачи</title>
+<link rel="stylesheet" href="task-board.css">
+<style>
+  :root { --app-header-h: 52px; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0e17;
+    color: #c8d6e5;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    padding-top: var(--app-header-h);
+  }
+  #app-header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(10, 14, 23, 0.97);
+    border-bottom: 1px solid #1e293b;
+    z-index: 9500;
+  }
+  #app-header #mc-project-btn {
+    flex: 1;
+    min-width: 0;
+    background: #1e293b;
+    color: #7dd3fc;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #app-header #mc-project-btn:hover { background: #334155; }
+  #app-header button.tt-header-role {
+    flex-shrink: 0;
+    background: #1e293b;
+    color: #fde68a;
+    border: 1px solid #854d0e;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #app-header button.tt-header-role:hover { background: #422006; }
+  @media (max-width: 520px) {
+    #app-header { padding: 6px 8px; gap: 6px; }
+    #app-header #mc-project-btn { font-size: 12px; padding: 6px 8px; }
+    #app-header button.tt-header-role { font-size: 11px; padding: 6px 8px; max-width: 100px; }
+  }
+  /* GitHub / project popups */
+  .mc-overlay {
+    display: none;
+    position: fixed;
+    inset: var(--app-header-h) 0 0 0;
+    z-index: 9600;
+    background: rgba(4, 8, 16, 0.78);
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+  }
+  .mc-overlay.open { display: flex; }
+  .mc-popup {
+    width: min(520px, 100%);
+    max-height: calc(100vh - var(--app-header-h) - 24px);
+    background: #111827;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  }
+  .mc-popup-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #334155;
+    background: #0f172a;
+  }
+  .mc-popup-head h3 { font-size: 15px; color: #e2e8f0; font-weight: 600; }
+  .mc-popup-body { overflow: auto; flex: 1; padding: 10px 12px 14px; min-height: 0; }
+  .mc-gh-inline {
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: #0b1220;
+  }
+  .mc-gh-inline summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: #7dd3fc;
+    list-style: none;
+  }
+  .mc-gh-inline summary::-webkit-details-marker { display: none; }
+  .mc-gh-inline[open] summary { margin-bottom: 8px; }
+  .mc-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 8px 0 6px;
+  }
+  .mc-project-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 8px 10px;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    background: #0b1220;
+  }
+  .mc-project-row.active { border-color: #2563eb; background: rgba(37, 99, 235, 0.12); }
+  .mc-project-name { font-size: 13px; color: #e2e8f0; font-weight: 600; flex: 1 1 120px; min-width: 0; }
+  .mc-project-slug { font-size: 11px; color: #64748b; flex: 1 1 100%; word-break: break-all; }
+  .mc-project-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+  .mc-btn {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .mc-btn.secondary { background: #1e293b; color: #cbd5e1; border: 1px solid #475569; }
+  .mc-btn:hover { filter: brightness(1.08); }
+  .mc-tag { font-size: 11px; color: #86efac; }
+  .mc-empty { color: #64748b; font-size: 12px; padding: 12px 4px; text-align: center; }
+  .mc-gh-form { display: flex; flex-direction: column; gap: 10px; }
+  .mc-gh-form label { font-size: 12px; color: #94a3b8; }
+  .mc-gh-form input[type="password"],
+  .mc-gh-form input[type="text"] {
+    width: 100%;
+    background: #0b1220;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    color: #e2e8f0;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .mc-gh-hint { font-size: 12px; color: #94a3b8; line-height: 1.45; }
+  .mc-gh-hint a { color: #7dd3fc; }
+  .mc-gh-status-line { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: #0f172a; border: 1px solid #334155; }
+  .mc-gh-status-line.connected { color: #86efac; border-color: #166534; }
+  .mc-gh-status-line.error { color: #fca5a5; border-color: #991b1b; }
+  .mc-gh-error { font-size: 12px; color: #fca5a5; min-height: 1.2em; }
+  .mc-btn:disabled { opacity: 0.55; pointer-events: none; }
+  .mc-popup-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+</style>
+</head>
+<body>
+
+<div id="app-header">
+  <button type="button" id="mc-project-btn" title="Выбрать проект">—</button>
+  <button type="button" class="tt-header-role" id="tt-header-role" title="Текущая роль — нажмите для смены">QA_Engineer</button>
+</div>
+
+<div id="mc-project-overlay" class="mc-overlay">
+  <div class="mc-popup" id="mc-project-popup">
+    <div class="mc-popup-head">
+      <h3>🎮 Проекты MakeCode</h3>
+      <button type="button" class="tt-close-btn" id="mc-project-close" title="Закрыть">✕</button>
+    </div>
+    <div class="mc-popup-body">
+      <details class="mc-gh-inline" id="mc-gh-inline">
+        <summary id="mc-gh-inline-summary">GitHub — войти</summary>
+        <div class="mc-gh-form">
+          <div class="mc-gh-status-line" id="mc-gh-session">Проверка…</div>
+          <p class="mc-gh-hint">PAT (scope <code>repo</code>) или Device Flow.</p>
+          <label for="mc-gh-token">PAT</label>
+          <input type="password" id="mc-gh-token" autocomplete="off" placeholder="ghp_… или github_pat_…">
+          <div class="mc-gh-error" id="mc-gh-error" aria-live="polite"></div>
+          <div class="mc-popup-actions">
+            <button type="button" class="mc-btn" id="mc-gh-save">Сохранить</button>
+            <button type="button" class="mc-btn secondary" id="mc-gh-device">Device Flow</button>
+            <button type="button" class="mc-btn secondary" id="mc-gh-logout">Выйти</button>
+          </div>
+          <div class="mc-gh-hint" id="mc-gh-device-hint"></div>
+        </div>
+      </details>
+      <details class="mc-gh-inline" id="mc-cursor-inline">
+        <summary id="mc-cursor-inline-summary">Cursor — ключ</summary>
+        <div class="mc-gh-form">
+          <div class="mc-gh-status-line" id="mc-cursor-session">Проверка…</div>
+          <p class="mc-gh-hint">API key для AI_Agent (tt-agent-worker). <strong>Не</strong> попадает в GitHub — каждый указывает свой.</p>
+          <label for="mc-cursor-token">Cursor API key</label>
+          <input type="password" id="mc-cursor-token" autocomplete="off" placeholder="crsr_…">
+          <div class="mc-gh-error" id="mc-cursor-error" aria-live="polite"></div>
+          <div class="mc-popup-actions">
+            <button type="button" class="mc-btn" id="mc-cursor-save">Сохранить</button>
+            <button type="button" class="mc-btn secondary" id="mc-cursor-logout">Удалить</button>
+          </div>
+        </div>
+      </details>
+      <div class="mc-section-title">Система заявок</div>
+      <div id="mc-board-list"></div>
+      <div class="mc-section-title">Локально (games/)</div>
+      <div id="mc-local-list"></div>
+      <div class="mc-section-title">GitHub — только MakeCode Arcade</div>
+      <div id="mc-remote-list"></div>
+    </div>
+    <div class="mc-popup-actions" style="padding: 0 12px 12px">
+      <button type="button" class="mc-btn secondary" id="mc-project-refresh">Обновить</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Task board -->
+<div id="tt-board-overlay">
+  <div id="tt-board-popup">
+    <div class="tt-board-header">
+      <div class="tt-board-header-top">
+        <h2>📋 Задачи — makecode-arcade</h2>
+        <button type="button" class="tt-close-btn" id="tt-board-close" title="Закрыть">✕</button>
+      </div>
+      <div class="tt-board-controls">
+        <label class="tt-show-all-toggle" title="Показать удалённые и задачи других исполнителей">
+          <span class="tt-switch">
+            <input type="checkbox" id="tt-show-all">
+            <span class="tt-switch-slider"></span>
+          </span>
+          все
+        </label>
+        <input type="search" id="tt-board-search" class="tt-board-search" placeholder="Поиск по задачам…" autocomplete="off">
+        <button type="button" class="tt-balance-badge" id="tt-balance-badge" title="Накопленные звёзды">⭐ 0</button>
+        <button type="button" class="tt-icon-btn" id="tt-worker-restart" title="Перезапустить AI-воркер (если завис)">🔄</button>
+        <button type="button" class="tt-icon-btn" id="tt-view-toggle">⊞ Канбан</button>
+      </div>
+    </div>
+    <div class="tt-board-body" id="tt-board-body">
+      <div class="tt-list-toolbar" id="tt-list-toolbar">
+        <span class="tt-list-toolbar-label">Список</span>
+        <button type="button" class="tt-icon-btn tt-icon-btn-subtle" id="tt-create-task-btn-list" title="Новая задача">＋</button>
+      </div>
+      <div class="tt-kanban" id="tt-kanban"></div>
+      <div class="tt-list-view" id="tt-list-view"></div>
+    </div>
+  </div>
+</div>
+
+<div id="tt-detail-overlay">
+  <div id="tt-detail-popup">
+    <div class="tt-detail-head">
+      <div class="tt-detail-head-row">
+        <div class="tt-detail-head-left">
+          <h3 id="tt-detail-title">Задача</h3>
+          <div class="tt-tag-row" id="tt-detail-tags"></div>
+          <div class="tt-detail-meta" id="tt-detail-meta"></div>
+          <div class="tt-points-bar" id="tt-points-bar" hidden>
+            <span class="tt-points-label">План</span>
+            <div class="tt-points-stars" id="tt-points-stars"></div>
+          </div>
+        </div>
+        <div class="tt-detail-head-right" id="tt-detail-badge-slot"></div>
+        <div class="tt-detail-manual-actions" id="tt-detail-manual-actions" hidden>
+          <button type="button" class="tt-ghost-btn" id="tt-edit-task-btn" title="Редактировать">✎</button>
+          <button type="button" class="tt-ghost-btn tt-ghost-danger" id="tt-delete-task-btn" title="Удалить">🗑</button>
+        </div>
+        <button type="button" class="tt-close-btn" id="tt-detail-close" title="Закрыть">✕</button>
+      </div>
+    </div>
+    <div class="tt-detail-body" id="tt-detail-body">
+      <div class="tt-detail-edit-form" id="tt-detail-edit-form" hidden>
+        <input type="text" id="tt-edit-title" class="tt-edit-input" placeholder="Название">
+        <div class="tt-tag-row" id="tt-edit-tags"></div>
+        <textarea id="tt-edit-desc" class="tt-edit-textarea" rows="6" placeholder="Описание (Markdown)"></textarea>
+        <div class="tt-edit-actions">
+          <button type="button" class="tt-btn secondary" id="tt-edit-cancel-btn">Отмена</button>
+          <button type="button" class="tt-btn" id="tt-edit-save-btn">Сохранить</button>
+        </div>
+      </div>
+      <div class="tt-detail-desc tt-md" id="tt-detail-desc"></div>
+      <div class="tt-comments">
+        <div class="tt-comments-head" id="tt-comments-head">
+          <h4>Комментарии</h4>
+        </div>
+        <div id="tt-detail-comments"></div>
+        <div class="tt-comment tt-draft-card" id="tt-detail-composer" data-collapsed="1" hidden>
+          <div class="tt-draft-collapsed" id="tt-draft-collapsed">
+            <div class="tt-comment-version-meta">
+              <div class="tt-comment-meta-left">
+                <span class="tt-comment-author" id="tt-draft-author-collapsed">—</span>
+              </div>
+            </div>
+            <button type="button" class="tt-draft-plus" id="tt-draft-plus" title="Новый комментарий">+</button>
+          </div>
+          <div class="tt-draft-body" id="tt-draft-body" hidden>
+            <div class="tt-comment-version-meta tt-draft-meta">
+              <div class="tt-comment-meta-left">
+                <span class="tt-comment-author" id="tt-draft-author">—</span>
+                <div class="tt-draft-stars" id="tt-draft-stars"></div>
+              </div>
+              <div class="tt-comment-meta-right">
+                <span class="tt-comment-ids tt-draft-id" id="tt-draft-id"></span>
+                <span class="tt-comment-time tt-draft-time" id="tt-draft-time"></span>
+              </div>
+            </div>
+            <textarea id="tt-comment-input" rows="1" placeholder="Сообщение…"></textarea>
+            <div class="tt-draft-actions">
+              <button type="button" class="tt-composer-attach" id="tt-composer-attach" title="Вложение (скоро)">📎</button>
+              <button type="button" class="tt-composer-send" id="tt-composer-send" title="Отправить" disabled>➤</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tt-detail-actions">
+      <div class="tt-transfer-group" id="tt-project-move-group">
+        <div class="tt-transfer-label">Перенести в проект…</div>
+        <div class="tt-project-move-row">
+          <select id="tt-project-move-select" class="tt-project-select" title="Целевой проект"></select>
+          <button type="button" class="tt-btn secondary" id="tt-project-move-btn">Перенести</button>
+        </div>
+      </div>
+      <div class="tt-transfer-group" id="tt-handoff-group">
+        <div class="tt-transfer-label">Роль · передать <span class="tt-hotkey-hint">1–3 · Alt+Enter</span></div>
+        <div class="tt-transfer-btns" id="tt-transfer-btns">
+          <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="AI_Agent" title="AI_Agent (1)">AI_Agent</button>
+          <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="Developer" title="Developer (2)">Developer</button>
+          <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="QA_Engineer" title="QA_Engineer (3)">QA_Engineer</button>
+          <button type="button" class="tt-btn tt-transfer-go" id="tt-transfer-go-detail" title="Передать (Alt+Enter)">➜</button>
+        </div>
+      </div>
+      <div class="tt-action-row">
+        <button type="button" class="tt-btn danger" id="tt-close-task-btn">Закрыть задачу</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tt-motivation-overlay">
+  <div id="tt-motivation-popup">
+    <div class="tt-motivation-head">
+      <h3>⭐ Мотивация</h3>
+      <label class="tt-show-all-toggle" title="Показать события всех исполнителей">
+        <input type="checkbox" id="tt-motivation-all"> все
+      </label>
+      <button type="button" class="tt-btn" id="tt-motivation-payout">Получить / выдать</button>
+      <button type="button" class="tt-btn secondary" id="tt-motivation-backfill" title="Зачислить звёзды за уже закрытые задачи">Закрытые</button>
+      <button type="button" class="tt-close-btn" id="tt-motivation-close" title="Закрыть">✕</button>
+    </div>
+    <div class="tt-motivation-balance" id="tt-motivation-balance-line">Баланс: ⭐ 0</div>
+    <div class="tt-motivation-table-wrap">
+      <table class="tt-motivation-table">
+        <thead>
+          <tr>
+            <th>Когда</th>
+            <th>Тип</th>
+            <th>Δ</th>
+            <th>Кому</th>
+            <th>Кто</th>
+            <th>Заметка</th>
+          </tr>
+        </thead>
+        <tbody id="tt-motivation-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="tt-create-overlay">
+  <div id="tt-create-popup">
+    <div class="tt-create-head">
+      <h3>Новая задача</h3>
+      <button type="button" class="tt-close-btn" id="tt-create-close" title="Отмена">✕</button>
+    </div>
+    <p class="tt-create-sub" id="tt-create-sub"></p>
+    <textarea id="tt-create-title" class="tt-edit-input tt-create-title" rows="1" placeholder="Название (можно #Баг #Идея…)" maxlength="200"></textarea>
+    <div class="tt-tag-row" id="tt-create-tags"></div>
+    <label class="tt-create-points">Баллы <input type="number" id="tt-create-points" min="1" max="99" value="1"></label>
+    <textarea id="tt-create-desc" class="tt-edit-textarea" rows="2" placeholder="Описание (необязательно)"></textarea>
+    <div class="tt-create-actions">
+      <button type="button" class="tt-btn secondary" id="tt-create-cancel">Отмена</button>
+      <button type="button" class="tt-btn" id="tt-create-save">Создать</button>
+    </div>
+  </div>
+</div>
+
+<div id="tt-transfer-overlay">
+  <div id="tt-transfer-popup">
+    <div class="tt-transfer-popup-head">
+      <h3 id="tt-transfer-title">На кого передать задачу?</h3>
+      <button type="button" class="tt-close-btn" id="tt-transfer-close" title="Отмена">✕</button>
+    </div>
+    <p class="tt-transfer-sub" id="tt-transfer-sub"></p>
+    <div class="tt-composer" id="tt-transfer-composer">
+      <button type="button" class="tt-composer-attach" title="Вложение (скоро)" disabled>📎</button>
+      <div class="tt-composer-field">
+        <textarea id="tt-transfer-comment" rows="1" placeholder="Комментарий (обязателен)…"></textarea>
+        <button type="button" class="tt-composer-send" id="tt-transfer-send" title="Отправить" disabled>➤</button>
+      </div>
+    </div>
+    <div class="tt-transfer-group" id="tt-handoff-popup-group">
+      <div class="tt-transfer-label">Роль · передать <span class="tt-hotkey-hint">1–3 · Alt+Enter</span></div>
+      <div class="tt-transfer-btns" id="tt-quick-transfer-btns">
+        <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="AI_Agent" title="AI_Agent (1)">AI_Agent</button>
+        <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="Developer" title="Developer (2)">Developer</button>
+        <button type="button" class="tt-btn tt-header-btn tt-role-switch" data-role="QA_Engineer" title="QA_Engineer (3)">QA_Engineer</button>
+        <button type="button" class="tt-btn tt-transfer-go" id="tt-transfer-go-popup" title="Передать (Alt+Enter)">➜</button>
+      </div>
+    </div>
+    <div class="tt-action-row">
+      <button type="button" class="tt-btn danger" id="tt-quick-close-btn">Закрыть задачу</button>
+      <button type="button" class="tt-btn secondary" id="tt-transfer-cancel">Отмена</button>
+    </div>
+  </div>
+</div>
+
+<div id="tt-ctx-menu" class="tt-ctx-menu"></div>
+
+<div id="tt-feature-overlay">
+  <div id="tt-feature-popup">
+    <div class="tt-create-head">
+      <h3 id="tt-feature-title">Фича</h3>
+      <button type="button" class="tt-close-btn" id="tt-feature-close" title="Отмена">✕</button>
+    </div>
+    <p class="tt-create-sub" id="tt-feature-sub"></p>
+    <input type="search" id="tt-feature-search" class="tt-board-search" placeholder="Поиск по фичам…" autocomplete="off">
+    <div id="tt-feature-tree" class="tt-feature-tree"></div>
+    <div class="tt-create-actions">
+      <button type="button" class="tt-btn secondary" id="tt-feature-cancel">Пропустить</button>
+      <button type="button" class="tt-btn" id="tt-feature-confirm">Подтвердить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Stubs для внешних зависимостей из yt_game ─────────────────────
+// task-board.js ожидает isEditorMode(params) из state.js и
+// pushBoardNotif(text, type) из ui.js. Здесь — минимальные заглушки.
+function isEditorMode() { return true; }
+function pushBoardNotif(text, type) {
+  console.log('[notif]', type || 'system', text);
+}
+</script>
+<script src="task-board.js"></script>
+<script src="github-sync.js"></script>
+<script>
+function syncAppHeaderOffset() {
+  const h = document.getElementById('app-header')?.offsetHeight || 52;
+  document.documentElement.style.setProperty('--app-header-h', h + 'px');
+}
+window.addEventListener('resize', syncAppHeaderOffset);
+document.addEventListener('DOMContentLoaded', () => {
+  syncAppHeaderOffset();
+  mcInitGithubSync();
+  ttInitTaskBoard();
+  ttOpenBoard();
+});
+</script>
+</body>
+</html>

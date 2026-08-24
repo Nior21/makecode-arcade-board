@@ -1,0 +1,12 @@
+{
+    "name": "makecode-arcade-workspace",
+    "private": true,
+    "scripts": {
+        "build": "scripts/build.sh",
+        "new-game": "scripts/new-game.sh",
+        "flash-wait": "scripts/flash-wait.sh"
+    },
+    "devDependencies": {
+        "makecode": "^1.3.5"
+    }
+}
