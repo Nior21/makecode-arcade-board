@@ -2656,7 +2656,7 @@ function ttUpdateRoleSwitchButtons() {
     btn.classList.toggle('is-current-role', role === ttState.viewer);
     const digit = TT_ROLE_HOTKEY[role];
     btn.title = digit
-      ? `Выбрать ${role} (${digit}, Alt+${digit})`
+      ? `Выбрать ${role} (Alt+${digit})`
       : `Выбрать ${role}`;
   });
 }
