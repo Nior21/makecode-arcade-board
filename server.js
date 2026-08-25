@@ -410,6 +410,23 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // Agent commit: semver bump (patch|minor|major) + optional push. taskId → #short в сообщении.
+  if (pathname === '/api/board/commit' && req.method === 'POST') {
+    parseJsonBody(req).then(async (body) => {
+      const result = await board.commitBoard({
+        bump: body.bump || 'patch',
+        message: body.message || body.body,
+        taskId: body.taskId || body.task_id,
+        push: !!body.push,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+    }).catch((err) => {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
 
   // Cursor API key — локально, не в git.
   if (pathname === '/api/cursor/status' && req.method === 'GET') {

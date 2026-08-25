@@ -84,6 +84,9 @@ const ttState = {
   deviceOrigin: null,
   audioCtx: null,
   soundsEnabled: localStorage.getItem('tt-sounds') !== '0',
+  popupHistoryDepth: 0,
+  popupHistoryIgnore: 0,
+  popupDismissWired: false,
 };
 
 const TT_READ_KEY = 'tt-read-state';
@@ -585,7 +588,7 @@ function ttMarkdownToHtml(md) {
       para.push(lines[i]);
       i++;
     }
-    out.push(`<p>${ttInlineMd(para.join(' '))}</p>`);
+    out.push(`<p>${para.map((l) => ttInlineMd(l)).join('<br>')}</p>`);
   }
 
   return out.join('\n');
@@ -743,6 +746,145 @@ function ttIsTypingTarget(el) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+const TT_POPUP_LAYERS = [
+  'mc-project-overlay',
+  'tt-feature-overlay',
+  'tt-create-overlay',
+  'tt-transfer-overlay',
+  'tt-motivation-overlay',
+  'tt-detail-overlay',
+  'tt-board-overlay',
+];
+
+function ttPopupIsOpen(id) {
+  return document.getElementById(id)?.classList.contains('open') ?? false;
+}
+
+function ttPopupHistoryPush(layerId) {
+  ttState.popupHistoryDepth = (ttState.popupHistoryDepth || 0) + 1;
+  history.pushState({ ttPopupLayer: layerId }, '');
+}
+
+function ttPopupHistoryPop(fromPopstate) {
+  if ((ttState.popupHistoryDepth || 0) <= 0) return;
+  ttState.popupHistoryDepth--;
+  if (!fromPopstate) {
+    ttState.popupHistoryIgnore = (ttState.popupHistoryIgnore || 0) + 1;
+    history.back();
+  }
+}
+
+function ttPopupHistoryReset(fromPopstate) {
+  const n = ttState.popupHistoryDepth || 0;
+  if (n <= 0) return;
+  ttState.popupHistoryDepth = 0;
+  if (!fromPopstate) {
+    ttState.popupHistoryIgnore = (ttState.popupHistoryIgnore || 0) + n;
+    history.go(-n);
+  }
+}
+
+function ttTopOpenPopupLayer() {
+  for (const id of TT_POPUP_LAYERS) {
+    if (ttPopupIsOpen(id)) return id;
+  }
+  return null;
+}
+
+function ttDismissFloatingMenus() {
+  if (ttState.ctxMenu) {
+    ttCloseCtxMenu();
+    return true;
+  }
+  if (ttState.statusMenu) {
+    ttCloseStatusMenu();
+    return true;
+  }
+  if (ttState.roleMenu) {
+    ttCloseRoleMenu();
+    return true;
+  }
+  return false;
+}
+
+function ttDismissInlineOverlays() {
+  if (ttState.editingCommentId) {
+    ttState.editingCommentId = null;
+    if (ttState.detailTaskId) ttRenderDetail(ttGetTask(ttState.detailTaskId));
+    return true;
+  }
+  if (ttState.manualEditing) {
+    ttSetManualEditMode(false);
+    return true;
+  }
+  return false;
+}
+
+function ttClosePopupLayer(id, opts = {}) {
+  switch (id) {
+    case 'tt-transfer-overlay':
+      ttCloseTransferPopup(opts);
+      break;
+    case 'tt-create-overlay':
+      ttCloseCreateTask(opts);
+      break;
+    case 'tt-feature-overlay':
+      ttCloseFeaturePicker([], opts);
+      break;
+    case 'tt-motivation-overlay':
+      ttCloseMotivation(opts);
+      break;
+    case 'tt-detail-overlay':
+      ttCloseDetail(opts);
+      break;
+    case 'tt-board-overlay':
+      ttCloseBoard(opts);
+      break;
+    case 'mc-project-overlay':
+      if (typeof mcCloseProjectPopup === 'function') mcCloseProjectPopup(opts);
+      break;
+    default:
+      break;
+  }
+}
+
+function ttDismissTopOverlay(opts = {}) {
+  if (ttDismissFloatingMenus()) return true;
+  if (ttDismissInlineOverlays()) return true;
+  const id = ttTopOpenPopupLayer();
+  if (!id) return false;
+  ttClosePopupLayer(id, opts);
+  return true;
+}
+
+function ttWirePopupDismiss() {
+  if (ttState.popupDismissWired) return;
+  ttState.popupDismissWired = true;
+
+  window.addEventListener('popstate', () => {
+    const ignore = ttState.popupHistoryIgnore || 0;
+    if (ignore > 0) {
+      ttState.popupHistoryIgnore = ignore - 1;
+      return;
+    }
+    if ((ttState.popupHistoryDepth || 0) > 0) {
+      ttState.popupHistoryDepth--;
+    }
+    ttDismissTopOverlay({ fromPopstate: true });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.repeat) return;
+    if (e.key !== 'Escape') return;
+    const hasPopup = !!ttTopOpenPopupLayer()
+      || ttState.ctxMenu || ttState.statusMenu || ttState.roleMenu
+      || ttState.manualEditing || ttState.editingCommentId;
+    if (!hasPopup) return;
+    e.preventDefault();
+    ttDismissTopOverlay();
+  });
+}
+
 function ttHandoffHotkeyRole(key) {
   const map = { 1: 'AI_Agent', 2: 'Developer', 3: 'QA_Engineer' };
   return map[key] || null;
@@ -877,31 +1019,24 @@ async function ttDoMoveProject(taskId) {
 
 function ttColumnForTask(task, viewer = ttState.viewer) {
   if (!ttMatchesProjectFilter(task)) return null;
-  if (task.deleted) {
-    if (!ttState.showTrash && !ttEffectiveShowAll()) return null;
-    return 'cancelled';
+
+  if (ttEffectiveShowAll()) {
+    if (task.deleted) return 'cancelled';
+    const st = task.status || 'open';
+    if (st === 'cancelled') return 'cancelled';
+    return st;
   }
+
+  if (task.deleted) return null;
 
   const viewerStatus = ttViewerTaskStatus(task, viewer);
+  if (viewerStatus === 'done' || viewerStatus === 'cancelled') return null;
+  if (task.status === 'cancelled') return null;
 
-  if ((viewerStatus === 'done' || viewerStatus === 'cancelled') && !ttEffectiveShowAll()) {
-    return null;
-  }
+  if (!ttTaskParticipants(task).includes(viewer)) return null;
+  if (!ttIsTaskOwner(task, viewer)) return null;
 
-  if (task.status === 'cancelled') {
-    if (ttIsBoardRole(viewer)) return 'cancelled';
-    return null;
-  }
-
-  const isParticipant = ttTaskParticipants(task).includes(viewer);
-  if (!isParticipant && !ttEffectiveShowAll()) return null;
-
-  if (!isParticipant) return task.status;
-  if (ttIsTaskOwner(task, viewer)) return viewerStatus;
-  if (!ttEffectiveShowAll()) return null;
-  if (task.status === 'open' || task.status === 'in_progress') return null;
-  if (task.status === 'cancelled') return 'cancelled';
-  return 'done';
+  return viewerStatus;
 }
 
 function ttTaskSearchText(task) {
@@ -950,7 +1085,7 @@ function ttVisibleTasks(viewer = ttState.viewer) {
     if (!ttMatchesProjectFilter(t)) return false;
     if (!ttMatchesSearch(t)) return false;
     if (!ttMatchesTagFilter(t)) return false;
-    if (t.deleted && !ttState.showTrash && !ttEffectiveShowAll()) return false;
+    if (t.deleted && !ttEffectiveShowAll()) return false;
     return ttColumnForTask(t, viewer) !== null;
   });
 }
@@ -1089,6 +1224,19 @@ function ttIsAgentStartComment(c) {
   return c?.author === 'AI_Agent' && /tt-agent-worker:\s*старт/i.test(c?.text || '');
 }
 
+function ttRenderAgentStartCommentHtml(text) {
+  const raw = String(text || '');
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const firstLine = lines[0] || '';
+  const rest = lines.slice(1);
+  let html = `<span class="tt-agent-start-label">${ttInlineMd(firstLine)}</span>`;
+  if (rest.some((l) => l.trim())) {
+    html += `<div class="tt-agent-start-meta">${rest.map((l) => ttInlineMd(l)).join('<br>')}</div>`;
+  }
+  html += '<div class="tt-agent-thinking" aria-hidden="true"><span></span><span></span><span></span></div>';
+  return html;
+}
+
 function ttIsAgentWorkingTask(taskId) {
   return !!(taskId && ttState.agentActiveTaskId && taskId === ttState.agentActiveTaskId);
 }
@@ -1103,7 +1251,7 @@ function ttApplyAgentWorkingUi() {
     popup.classList.toggle('tt-agent-working', taskId && ttState.detailTaskId === taskId);
   }
   document.querySelectorAll('#tt-detail-comments .tt-comment[data-agent-start="1"]').forEach((block) => {
-    block.classList.toggle('tt-agent-working', taskId && ttState.detailTaskId === taskId);
+    block.classList.toggle('tt-agent-start-active', taskId && ttState.detailTaskId === taskId);
   });
 }
 
@@ -1294,13 +1442,16 @@ function ttOpenCreateTask() {
     onChange: (next) => { ttState.pendingTagDraft = next; },
   });
   document.getElementById('tt-create-overlay').classList.add('open');
+  ttPopupHistoryPush('tt-create-overlay');
   ttSyncGrowField(titleEl);
   ttSyncGrowField(descEl);
   setTimeout(() => titleEl?.focus(), 50);
 }
 
-function ttCloseCreateTask() {
+function ttCloseCreateTask(opts = {}) {
+  const wasOpen = ttPopupIsOpen('tt-create-overlay');
   document.getElementById('tt-create-overlay')?.classList.remove('open');
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryPop(opts.fromPopstate);
 }
 
 function ttSyncGrowField(el) {
@@ -2022,15 +2173,18 @@ function ttOpenFeaturePicker({ mode, title, sub, multi }) {
     if (search) search.value = '';
     ttRenderFeatureTree(multi);
     document.getElementById('tt-feature-overlay')?.classList.add('open');
+    ttPopupHistoryPush('tt-feature-overlay');
   });
 }
 
-function ttCloseFeaturePicker(result) {
+function ttCloseFeaturePicker(result, opts = {}) {
+  const wasOpen = ttPopupIsOpen('tt-feature-overlay');
   document.getElementById('tt-feature-overlay')?.classList.remove('open');
   const resolve = ttState.featurePickResolve;
   ttState.featurePickResolve = null;
   ttState.featurePickMode = null;
   resolve?.(result || []);
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryPop(opts.fromPopstate);
 }
 
 function ttRenderFeatureTree(multi) {
@@ -2184,28 +2338,6 @@ function ttRenderBoard() {
     const headSpacer = document.createElement('span');
     headSpacer.style.flex = '1';
     head.appendChild(headSpacer);
-    if (col.key === 'cancelled') {
-      const trashLabel = document.createElement('label');
-      trashLabel.className = 'tt-col-trash-toggle';
-      trashLabel.title = 'Показать удалённые задачи (корзина)';
-      const trashSwitch = document.createElement('span');
-      trashSwitch.className = 'tt-switch';
-      const trashCb = document.createElement('input');
-      trashCb.type = 'checkbox';
-      trashCb.checked = ttState.showTrash;
-      trashCb.addEventListener('change', () => {
-        ttState.showTrash = trashCb.checked;
-        localStorage.setItem('tt-show-trash', trashCb.checked ? '1' : '0');
-        ttRenderBoard();
-      });
-      const trashSlider = document.createElement('span');
-      trashSlider.className = 'tt-switch-slider';
-      trashSwitch.appendChild(trashCb);
-      trashSwitch.appendChild(trashSlider);
-      trashLabel.appendChild(trashSwitch);
-      trashLabel.appendChild(document.createTextNode(' все'));
-      head.appendChild(trashLabel);
-    }
     const count = document.createElement('span');
     count.className = 'count';
     count.textContent = String(items.length);
@@ -2383,7 +2515,9 @@ function ttRenderCommentVersionEl(task, c, ver, isLast, showAll) {
 
   const text = document.createElement('div');
   text.className = 'tt-comment-text tt-md';
-  text.innerHTML = ttMarkdownToHtml(ver.text);
+  text.innerHTML = (!ver.stale && ttIsAgentStartComment(c))
+    ? ttRenderAgentStartCommentHtml(ver.text)
+    : ttMarkdownToHtml(ver.text);
   ttWireCopyableCodes(text);
   row.appendChild(text);
 
@@ -2479,7 +2613,7 @@ function ttRenderComments(task) {
       if (ttCommentUnread(c, taskReadAt)) block.classList.add('tt-unread');
       if (c.id === latestStartId) {
         block.dataset.agentStart = '1';
-        block.classList.add('tt-agent-working');
+        if (ttIsAgentWorkingTask(task.id)) block.classList.add('tt-agent-start-active');
       }
 
       if (ttState.editingCommentId === c.id && !c.deleted) {
@@ -2574,6 +2708,12 @@ function ttRenderDetailMeta(task, owner) {
     ? ` · ${colLabel} · ⭐${ttFormatPoints(task)}`
     : ` · наблюдение (${TT.statusLabels[task.status] || task.status}) · ⭐${ttFormatPoints(task)}`;
   el.appendChild(document.createTextNode(rest));
+  if (task.delivery_commit?.sha || task.delivery_commit?.shortSha) {
+    const dc = task.delivery_commit;
+    const sha = dc.shortSha || String(dc.sha || '').slice(0, 7);
+    const ver = dc.version ? ` · ${dc.version}` : '';
+    el.appendChild(document.createTextNode(` · commit ${sha}${ver}`));
+  }
 }
 
 function ttRenderDetail(task, opts = {}) {
@@ -2754,9 +2894,10 @@ function ttOpenDetail(taskId) {
   ttRenderDetail(task);
   if (task) ttRenderBoard();
   document.getElementById('tt-detail-overlay').classList.add('open');
+  ttPopupHistoryPush('tt-detail-overlay');
 }
 
-function ttCloseDetail() {
+function ttCloseDetail(opts = {}) {
   ttCaptureDraftFromDom();
   ttState.detailTaskId = null;
   ttState.editingCommentId = null;
@@ -2764,7 +2905,9 @@ function ttCloseDetail() {
   ttEndHandoff();
   ttSetManualEditMode(false);
   ttCloseCtxMenu();
+  const wasOpen = ttPopupIsOpen('tt-detail-overlay');
   document.getElementById('tt-detail-overlay')?.classList.remove('open');
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryPop(opts.fromPopstate);
 }
 
 function ttOpenTransferPopup(taskId, mode) {
@@ -2800,13 +2943,16 @@ function ttOpenTransferPopup(taskId, mode) {
   document.getElementById('tt-quick-close-btn').style.display = '';
 
   document.getElementById('tt-transfer-overlay').classList.add('open');
+  ttPopupHistoryPush('tt-transfer-overlay');
 }
 
-function ttCloseTransferPopup() {
+function ttCloseTransferPopup(opts = {}) {
   ttState.transferTaskId = null;
   ttState.transferMode = null;
   if (!ttState.detailTaskId) ttEndHandoff();
+  const wasOpen = ttPopupIsOpen('tt-transfer-overlay');
   document.getElementById('tt-transfer-overlay')?.classList.remove('open');
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryPop(opts.fromPopstate);
 }
 
 async function ttDoTransfer(fromDetail = false) {
@@ -3208,11 +3354,14 @@ async function ttOpenMotivation() {
   const allCb = document.getElementById('tt-motivation-all');
   if (allCb) allCb.checked = ttState.motivationShowAll;
   overlay.classList.add('open');
+  ttPopupHistoryPush('tt-motivation-overlay');
   await ttRefreshMotivationTable();
 }
 
-function ttCloseMotivation() {
+function ttCloseMotivation(opts = {}) {
+  const wasOpen = ttPopupIsOpen('tt-motivation-overlay');
   document.getElementById('tt-motivation-overlay')?.classList.remove('open');
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryPop(opts.fromPopstate);
 }
 
 async function ttRefreshMotivationTable() {
@@ -3331,6 +3480,7 @@ function ttWireComposer(root, onSend) {
 
 function ttOpenBoard() {
   document.getElementById('tt-board-overlay')?.classList.add('open');
+  ttPopupHistoryPush('tt-board-overlay');
   setNotifBoardMode?.(true);
   ttLoadTasks().catch(err => {
     console.error('[task-board]', err);
@@ -3338,15 +3488,19 @@ function ttOpenBoard() {
   });
 }
 
-function ttCloseBoard() {
+function ttCloseBoard(opts = {}) {
+  const wasOpen = ttPopupIsOpen('tt-board-overlay');
   document.getElementById('tt-board-overlay')?.classList.remove('open');
   setNotifBoardMode?.(false);
   ttCloseRoleMenu();
-  ttCloseDetail();
-  ttCloseTransferPopup();
-  ttCloseCreateTask();
+  ttCloseDetail({ skipHistory: true });
+  ttCloseTransferPopup({ skipHistory: true });
+  ttCloseCreateTask({ skipHistory: true });
+  ttCloseMotivation({ skipHistory: true });
+  ttCloseFeaturePicker([], { skipHistory: true });
   ttCloseStatusMenu();
   ttCloseCtxMenu();
+  if (wasOpen && !opts.skipHistory) ttPopupHistoryReset(opts.fromPopstate);
 }
 
 function ttToggleBoard() {
@@ -3363,6 +3517,7 @@ function ttStartAutoRefresh() {
 }
 
 function ttInitTaskBoard() {
+  ttWirePopupDismiss();
   ttLoadReadRoot();
   ttDeviceOrigin();
   const unlockAudio = () => {
