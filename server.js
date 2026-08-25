@@ -30,6 +30,7 @@ const FLASH_SUPERVISOR_ENABLED = process.env.FLASH_SUPERVISOR !== '0';
 // Supervisor for the tt-agent-worker. Used by the restart button.
 const WORKER_SUPERVISOR = process.env.WORKER_SUPERVISOR
   || '/storage/emulated/0/Projects/cursor-agent/tt-agent-worker/supervisor.sh';
+const WORKER_BASE = (process.env.TT_WORKER_BASE || 'http://127.0.0.1:9080').replace(/\/$/, '');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -210,6 +211,20 @@ function runSupervisor(args) {
   });
 }
 
+function fetchWorkerHealth() {
+  return new Promise((resolve) => {
+    const req = http.get(`${WORKER_BASE}/health`, { timeout: 2000 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (_) { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
 const server = http.createServer((req, res) => {
   const pathname = req.url.split('?')[0];
 
@@ -224,13 +239,21 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/api/worker/status' && req.method === 'GET') {
-    runSupervisor(['status']).then((r) => {
+    Promise.all([runSupervisor(['status']), fetchWorkerHealth()]).then(([r, health]) => {
       let data = { running: false, pid: null, log_tail: '' };
       if (r.ok && r.stdout) {
         try { data = JSON.parse(r.stdout); } catch (_) {}
       }
+      const active = health?.queue?.active || null;
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: r.ok, ...data, error: r.error }));
+      res.end(JSON.stringify({
+        ok: r.ok,
+        ...data,
+        activeTaskId: active?.taskId || null,
+        activeShortId: active?.shortId || null,
+        activeStartedAt: active?.startedAt || null,
+        error: r.error,
+      }));
     });
     return;
   }

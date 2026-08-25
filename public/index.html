@@ -46,6 +46,9 @@
   #app-header #mc-project-btn:hover { background: #334155; }
   #app-header button.tt-header-role {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: #1e293b;
     color: #fde68a;
     border: 1px solid #854d0e;
@@ -57,6 +60,15 @@
     max-width: 130px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  #app-header button.tt-header-role::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+    flex-shrink: 0;
   }
   #app-header button.tt-header-role:hover { background: #422006; }
   @media (max-width: 520px) {
@@ -78,7 +90,7 @@
   .mc-overlay.open { display: flex; }
   .mc-popup {
     width: min(520px, 100%);
-    max-height: calc(100vh - var(--app-header-h) - 24px);
+    max-height: calc(100dvh - var(--app-header-h) - 16px);
     background: #111827;
     border: 1px solid #334155;
     border-radius: 12px;
@@ -88,6 +100,7 @@
     box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
   }
   .mc-popup-head {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -97,7 +110,13 @@
     background: #0f172a;
   }
   .mc-popup-head h3 { font-size: 15px; color: #e2e8f0; font-weight: 600; }
-  .mc-popup-body { overflow: auto; flex: 1; padding: 10px 12px 14px; min-height: 0; }
+  .mc-popup-body { overflow: auto; flex: 1; padding: 10px 12px 14px; min-height: 0; -webkit-overflow-scrolling: touch; }
+  .mc-popup-foot {
+    flex-shrink: 0;
+    padding: 0 12px 12px;
+    border-top: 1px solid #1e293b;
+    background: #0f172a;
+  }
   .mc-gh-inline {
     border: 1px solid #334155;
     border-radius: 10px;
@@ -216,15 +235,29 @@
           </div>
         </div>
       </details>
+      <details class="mc-gh-inline" id="mc-board-inline">
+        <summary id="mc-board-inline-summary">Система заявок — GitHub repo</summary>
+        <div class="mc-gh-form">
+          <p class="mc-gh-hint">Репозиторий для синхронизации оболочки (public/, server, lib/). Формат: <code>owner/repo</code>.</p>
+          <label for="mc-board-repo">GitHub repo</label>
+          <input type="text" id="mc-board-repo" autocomplete="off" placeholder="nior21/makecode-arcade-board" spellcheck="false">
+          <div class="mc-gh-error" id="mc-board-repo-error" aria-live="polite"></div>
+          <div class="mc-popup-actions">
+            <button type="button" class="mc-btn" id="mc-board-repo-save">Сохранить</button>
+          </div>
+        </div>
+      </details>
       <div class="mc-section-title">Система заявок</div>
       <div id="mc-board-list"></div>
       <div class="mc-section-title">Локально (games/)</div>
       <div id="mc-local-list"></div>
       <div class="mc-section-title">GitHub — только MakeCode Arcade</div>
       <div id="mc-remote-list"></div>
-    </div>
-    <div class="mc-popup-actions" style="padding: 0 12px 12px">
-      <button type="button" class="mc-btn secondary" id="mc-project-refresh">Обновить</button>
+      <div class="mc-popup-foot">
+        <div class="mc-popup-actions">
+          <button type="button" class="mc-btn secondary" id="mc-project-refresh">Обновить</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -323,7 +356,7 @@
             <textarea id="tt-comment-input" rows="1" placeholder="Сообщение…"></textarea>
             <div class="tt-draft-actions">
               <button type="button" class="tt-composer-attach" id="tt-composer-attach" title="Вложение (скоро)">📎</button>
-              <button type="button" class="tt-composer-send" id="tt-composer-send" title="Отправить" disabled>➤</button>
+              <button type="button" class="tt-composer-send" id="tt-composer-send" title="Отправить (Ctrl+Enter)" aria-disabled="true">➤</button>
             </div>
           </div>
         </div>
@@ -412,7 +445,7 @@
       <button type="button" class="tt-composer-attach" title="Вложение (скоро)" disabled>📎</button>
       <div class="tt-composer-field">
         <textarea id="tt-transfer-comment" rows="1" placeholder="Комментарий (обязателен)…"></textarea>
-        <button type="button" class="tt-composer-send" id="tt-transfer-send" title="Отправить" disabled>➤</button>
+        <button type="button" class="tt-composer-send" id="tt-transfer-send" title="Отправить (Ctrl+Enter)" aria-disabled="true">➤</button>
       </div>
     </div>
     <div class="tt-transfer-group" id="tt-handoff-popup-group">

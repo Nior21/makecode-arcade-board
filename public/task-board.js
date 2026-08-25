@@ -24,7 +24,14 @@ const TT = {
     in_progress: 'done',
   },
   refreshMs: 15000,
+  workerPollMs: 2500,
 };
+
+const TT_TIP_SEND = 'Отправить (Ctrl+Enter)';
+const TT_TIP_TRANSFER = 'Передать (Alt+Enter)';
+const TT_TIP_TRANSFER_SAME_ROLE =
+  'Передать выбранной роли (сначала смените роль: 1–3 или Alt+1–3) · Alt+Enter';
+const TT_ROLE_HOTKEY = { AI_Agent: '1', Developer: '2', QA_Engineer: '3' };
 
 const ttState = {
   tasks: [],
@@ -39,6 +46,8 @@ const ttState = {
   handoffTaskId: null,
   roleMenu: null,
   refreshTimer: null,
+  workerPoll: null,
+  agentActiveTaskId: null,
   editingCommentId: null,
   commentEditDrafts: {},
   commentEditSelStart: null,
@@ -53,6 +62,7 @@ const ttState = {
   balances: {},
   motivationEvents: [],
   motivationShowAll: localStorage.getItem('tt-motivation-all') === '1',
+  draftSubmitting: false,
   draft: {
     taskId: null,
     expanded: false,
@@ -70,7 +80,250 @@ const ttState = {
   featurePickResolve: null,
   pendingTagDraft: [],
   projectList: [],
+  readStateRoot: null,
+  deviceOrigin: null,
+  audioCtx: null,
+  soundsEnabled: localStorage.getItem('tt-sounds') !== '0',
 };
+
+const TT_READ_KEY = 'tt-read-state';
+const TT_DEVICE_ORIGIN_KEY = 'tt-device-origin';
+
+/** Прочитанность — единое состояние на устройстве (не зависит от роли tt-viewer). */
+function ttLoadReadRoot() {
+  if (ttState.readStateRoot) return ttState.readStateRoot;
+  let root;
+  try {
+    root = JSON.parse(localStorage.getItem(TT_READ_KEY) || '{}');
+  } catch {
+    root = {};
+  }
+  if (TT.roles.some((role) => root[role]?.tasks || root[role]?.comments)) {
+    const merged = { tasks: {}, comments: {} };
+    for (const role of TT.roles) {
+      const rs = root[role];
+      if (!rs) continue;
+      for (const [id, ts] of Object.entries(rs.tasks || {})) {
+        if (!merged.tasks[id] || ts > merged.tasks[id]) merged.tasks[id] = ts;
+      }
+      for (const [id, ts] of Object.entries(rs.comments || {})) {
+        if (!merged.comments[id] || ts > merged.comments[id]) merged.comments[id] = ts;
+      }
+    }
+    root = merged;
+    localStorage.setItem(TT_READ_KEY, JSON.stringify(root));
+  }
+  if (!root.tasks) root.tasks = {};
+  if (!root.comments) root.comments = {};
+  ttState.readStateRoot = root;
+  return root;
+}
+
+function ttSaveReadState() {
+  ttLoadReadRoot();
+  localStorage.setItem(TT_READ_KEY, JSON.stringify(ttState.readStateRoot));
+}
+
+function ttDeviceOrigin() {
+  if (ttState.deviceOrigin) return ttState.deviceOrigin;
+  let origin;
+  try {
+    origin = JSON.parse(localStorage.getItem(TT_DEVICE_ORIGIN_KEY) || '{}');
+  } catch {
+    origin = {};
+  }
+  if (!origin.tasks) origin.tasks = {};
+  if (!origin.comments) origin.comments = {};
+  ttState.deviceOrigin = origin;
+  return origin;
+}
+
+function ttSaveDeviceOrigin() {
+  ttDeviceOrigin();
+  localStorage.setItem(TT_DEVICE_ORIGIN_KEY, JSON.stringify(ttState.deviceOrigin));
+}
+
+function ttMarkDeviceTask(taskId) {
+  if (!taskId) return;
+  ttDeviceOrigin().tasks[taskId] = true;
+  ttSaveDeviceOrigin();
+}
+
+function ttMarkDeviceComment(commentId) {
+  if (!commentId) return;
+  ttDeviceOrigin().comments[commentId] = true;
+  ttSaveDeviceOrigin();
+}
+
+function ttIsDeviceTask(taskId) {
+  return !!ttDeviceOrigin().tasks[taskId];
+}
+
+function ttIsDeviceComment(commentId) {
+  return !!ttDeviceOrigin().comments[commentId];
+}
+
+function ttCommentNeedsUnreadTrack(comment) {
+  if (!comment || comment.deleted) return false;
+  if (ttIsAgentStartComment(comment)) return false;
+  if (comment.author === 'AI_Agent') return true;
+  return !ttIsDeviceComment(comment.id);
+}
+
+function ttGetTaskReadAt(taskId) {
+  return ttLoadReadRoot().tasks[taskId] || null;
+}
+
+function ttCommentStamp(comment) {
+  return comment?.updated_at || comment?.created_at || '';
+}
+
+function ttMarkTaskRead(task) {
+  if (!task?.id) return;
+  const s = ttLoadReadRoot();
+  let taskStamp = task.updated_at || new Date().toISOString();
+  for (const c of task.comments || []) {
+    if (c.deleted) continue;
+    const cts = ttCommentStamp(c) || taskStamp;
+    if (cts > taskStamp) taskStamp = cts;
+    s.comments[c.id] = cts;
+  }
+  s.tasks[task.id] = taskStamp;
+  ttSaveReadState();
+}
+
+function ttMarkCommentRead(comment) {
+  if (!comment?.id || comment.deleted) return;
+  const s = ttLoadReadRoot();
+  s.comments[comment.id] = comment.updated_at || comment.created_at || new Date().toISOString();
+  ttSaveReadState();
+}
+
+function ttCommentUnread(comment, taskReadAt) {
+  if (!ttCommentNeedsUnreadTrack(comment)) return false;
+  const s = ttLoadReadRoot();
+  const ts = ttCommentStamp(comment);
+  if (!ts) return false;
+  const commentRead = s.comments[comment.id];
+  if (commentRead) return ts > commentRead;
+  if (!taskReadAt) return true;
+  return ts > taskReadAt;
+}
+
+const TT_HOVER_READ_MS = 1200;
+
+function ttSyncUnreadDom(task) {
+  if (!task?.id) return;
+  const card = document.querySelector(`.tt-card[data-task-id="${CSS.escape(task.id)}"]`);
+  if (card) card.classList.toggle('tt-unread', ttTaskUnread(task));
+  if (ttState.detailTaskId !== task.id) return;
+  const taskReadAt = ttGetTaskReadAt(task.id);
+  document.querySelectorAll('#tt-detail-comments .tt-comment[data-comment-id]').forEach((block) => {
+    const cid = block.dataset.commentId;
+    const c = (task.comments || []).find((x) => x.id === cid);
+    if (!c) return;
+    block.classList.toggle('tt-unread', ttCommentUnread(c, taskReadAt));
+  });
+}
+
+function ttMarkCommentReadAndSync(task, comment) {
+  if (!task || !comment || comment.deleted) return;
+  if (!ttCommentUnread(comment, ttGetTaskReadAt(task.id))) return;
+  ttMarkCommentRead(comment);
+  const taskReadAt = ttGetTaskReadAt(task.id);
+  const allRead = !(task.comments || []).some(
+    (c) => !c.deleted && ttCommentUnread(c, taskReadAt),
+  );
+  if (allRead) ttMarkTaskRead(task);
+  ttSyncUnreadDom(task);
+}
+
+function ttBindCommentReadHandlers(block, task, comment) {
+  if (!comment || comment.deleted || !ttCommentNeedsUnreadTrack(comment)) return;
+  let hoverTimer = null;
+  const clearHover = () => {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = null;
+  };
+  const markIfUnread = () => {
+    const live = ttGetTask(task.id);
+    const c = (live?.comments || []).find((x) => x.id === comment.id) || comment;
+    ttMarkCommentReadAndSync(live || task, c);
+  };
+  block.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, textarea, .tt-comment-edit')) return;
+    markIfUnread();
+  });
+  block.addEventListener('mouseenter', () => {
+    clearHover();
+    hoverTimer = setTimeout(markIfUnread, TT_HOVER_READ_MS);
+  });
+  block.addEventListener('mouseleave', clearHover);
+  block.addEventListener('mouseup', () => {
+    const sel = window.getSelection?.();
+    if (sel && !sel.isCollapsed && block.contains(sel.anchorNode)) markIfUnread();
+  });
+}
+
+function ttTaskUnread(task) {
+  if (!task?.id) return false;
+  const readAt = ttGetTaskReadAt(task.id);
+  if (!readAt) {
+    if (ttIsDeviceTask(task.id)) {
+      return (task.comments || []).some((c) => ttCommentUnread(c, null));
+    }
+    return (task.comments || []).some((c) => ttCommentNeedsUnreadTrack(c)) || !ttIsDeviceTask(task.id);
+  }
+  for (const c of task.comments || []) {
+    if (ttCommentUnread(c, readAt)) return true;
+  }
+  return false;
+}
+
+function ttEnsureAudio() {
+  if (!ttState.soundsEnabled) return null;
+  if (!ttState.audioCtx) {
+    try {
+      ttState.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch {
+      return null;
+    }
+  }
+  if (ttState.audioCtx.state === 'suspended') ttState.audioCtx.resume().catch(() => {});
+  return ttState.audioCtx;
+}
+
+function ttPlaySound(kind) {
+  const ctx = ttEnsureAudio();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const gain = ctx.createGain();
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0.07, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+  const tone = (freq, start, dur, type = 'sine') => {
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, start);
+    osc.connect(gain);
+    osc.start(start);
+    osc.stop(start + dur);
+  };
+
+  if (kind === 'error') {
+    tone(220, now, 0.22, 'square');
+    tone(180, now + 0.12, 0.18, 'square');
+    return;
+  }
+  if (kind === 'agent-done') {
+    tone(523.25, now, 0.14);
+    tone(659.25, now + 0.14, 0.14);
+    tone(783.99, now + 0.28, 0.2);
+    return;
+  }
+  tone(880, now, 0.1);
+}
 
 const TT_SYSTEM_TAGS = new Set(['manual', 'board', 'test-scenario', 'qa']);
 const TT_DEFAULT_TAGS = ['Идея', 'Баг', 'Фича', 'Bug', 'Feature'];
@@ -384,6 +637,25 @@ function ttIsTaskOwner(task, viewer = ttState.viewer) {
   return task?.assignee === viewer;
 }
 
+/** Статус задачи для текущего зрителя (у assignee «готово» после передачи = «новое»). */
+function ttViewerTaskStatus(task, viewer = ttState.viewer) {
+  if (!task) return 'open';
+  if (ttIsTaskOwner(task, viewer) && task.status === 'done') return 'open';
+  return task.status;
+}
+
+const TT_HANDOFF_PREFIX = '↪ Передано:';
+
+function ttIsHandoffComment(c) {
+  return String(c?.text || '').trimStart().startsWith(TT_HANDOFF_PREFIX);
+}
+
+function ttParseHandoffComment(c) {
+  const m = String(c?.text || '').trim().match(/^↪\s*Передано:\s*(.+?)\s*→\s*(.+)$/);
+  if (!m) return null;
+  return { from: m[1].trim(), to: m[2].trim() };
+}
+
 function ttEffectiveShowAll() {
   return ttState.showAll
     || !!ttNormalizeSearchQuery(ttState.searchQuery)
@@ -460,8 +732,8 @@ function ttSetViewer(role) {
 
 function ttCanHandoffTask(task) {
   if (!task || task.status === 'cancelled') return false;
-  if (ttState.handoffTaskId === task.id) return true;
   if (ttState.detailTaskId === task.id || ttState.transferTaskId === task.id) return true;
+  if (ttState.handoffTaskId === task.id) return true;
   return ttIsTaskOwner(task);
 }
 
@@ -610,7 +882,9 @@ function ttColumnForTask(task, viewer = ttState.viewer) {
     return 'cancelled';
   }
 
-  if ((task.status === 'done' || task.status === 'cancelled') && !ttEffectiveShowAll()) {
+  const viewerStatus = ttViewerTaskStatus(task, viewer);
+
+  if ((viewerStatus === 'done' || viewerStatus === 'cancelled') && !ttEffectiveShowAll()) {
     return null;
   }
 
@@ -623,8 +897,10 @@ function ttColumnForTask(task, viewer = ttState.viewer) {
   if (!isParticipant && !ttEffectiveShowAll()) return null;
 
   if (!isParticipant) return task.status;
-  if (ttIsTaskOwner(task, viewer)) return task.status;
+  if (ttIsTaskOwner(task, viewer)) return viewerStatus;
   if (!ttEffectiveShowAll()) return null;
+  if (task.status === 'open' || task.status === 'in_progress') return null;
+  if (task.status === 'cancelled') return 'cancelled';
   return 'done';
 }
 
@@ -809,6 +1085,50 @@ function ttMotivationTypeLabel(type) {
   })[type] || type;
 }
 
+function ttIsAgentStartComment(c) {
+  return c?.author === 'AI_Agent' && /tt-agent-worker:\s*старт/i.test(c?.text || '');
+}
+
+function ttIsAgentWorkingTask(taskId) {
+  return !!(taskId && ttState.agentActiveTaskId && taskId === ttState.agentActiveTaskId);
+}
+
+function ttApplyAgentWorkingUi() {
+  const taskId = ttState.agentActiveTaskId;
+  document.querySelectorAll('.tt-card[data-task-id]').forEach((card) => {
+    card.classList.toggle('tt-agent-working', taskId && card.dataset.taskId === taskId);
+  });
+  const popup = document.getElementById('tt-detail-popup');
+  if (popup) {
+    popup.classList.toggle('tt-agent-working', taskId && ttState.detailTaskId === taskId);
+  }
+  document.querySelectorAll('#tt-detail-comments .tt-comment[data-agent-start="1"]').forEach((block) => {
+    block.classList.toggle('tt-agent-working', taskId && ttState.detailTaskId === taskId);
+  });
+}
+
+async function ttPollWorkerStatus() {
+  try {
+    const r = await fetch('/api/worker/status');
+    const data = await r.json();
+    const prev = ttState.agentActiveTaskId;
+    const next = data.activeTaskId || null;
+    if (next !== prev) {
+      if (prev && !next) ttPlaySound('agent-done');
+      ttState.agentActiveTaskId = next;
+      ttApplyAgentWorkingUi();
+    }
+  } catch (_) {}
+}
+
+function ttStartWorkerPoll() {
+  if (ttState.workerPoll) return;
+  ttPollWorkerStatus();
+  ttState.workerPoll = setInterval(() => {
+    ttPollWorkerStatus().catch(() => {});
+  }, TT.workerPollMs);
+}
+
 function ttCardClass(task, viewer = ttState.viewer) {
   if (task?.deleted) return 'closed';
   const col = ttColumnForTask(task, viewer);
@@ -923,6 +1243,8 @@ async function ttCreateManualTask(title, description, points = 1, extraTags = []
   };
   const task = await ttApi('/tasks', { method: 'POST', body: JSON.stringify(payload) });
   ttReplaceTask(task);
+  ttMarkDeviceTask(task.id);
+  ttMarkTaskRead(task);
   ttUpdatePassCounter();
   ttRenderBoard();
   return task;
@@ -1038,8 +1360,10 @@ async function ttSaveCreateTask() {
       await ttPatchTask(task.id, { feature_ids: featureIds });
     }
     ttCloseCreateTask();
+    ttPlaySound('success');
     ttNotify('✓ Задача создана', 'system');
   } catch (err) {
+    ttPlaySound('error');
     ttNotify('⚠️ ' + err.message, 'system');
   }
 }
@@ -1086,6 +1410,8 @@ async function ttDeleteManualTask() {
 }
 
 async function ttAddComment(id, author, text, meta = {}) {
+  const before = ttGetTask(id);
+  const prevIds = new Set((before?.comments || []).map(c => c.id));
   const body = { author, text };
   if (meta.restored_from) body.restored_from = meta.restored_from;
   if (meta.stars != null) body.stars = meta.stars;
@@ -1095,10 +1421,16 @@ async function ttAddComment(id, author, text, meta = {}) {
     method: 'POST',
     body: JSON.stringify(body),
   });
+  const added = (updated.comments || []).find(c => !c.deleted && !prevIds.has(c.id));
+  if (added) {
+    ttMarkDeviceComment(added.id);
+    ttMarkCommentRead(added);
+  }
   ttReplaceTask(updated);
   ttRenderBoard();
   if (ttState.detailTaskId === id) ttRenderDetail(updated);
   ttLoadBalances().catch(() => {});
+  ttPlaySound('success');
   return updated;
 }
 
@@ -1395,7 +1727,7 @@ function ttOpenStatusMenu(task, anchorEl) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = col.label;
-    btn.disabled = task.status === col.key;
+    btn.disabled = ttViewerTaskStatus(task) === col.key;
     btn.onclick = (e) => {
       e.stopPropagation();
       ttCloseStatusMenu();
@@ -1412,8 +1744,9 @@ function ttOpenStatusMenu(task, anchorEl) {
 
 function ttRenderBadge(task, container) {
   const owner = ttIsTaskOwner(task);
+  const viewerStatus = ttViewerTaskStatus(task);
   const badge = document.createElement('span');
-  badge.className = `tt-badge ${task.deleted ? 'cancelled' : (owner ? task.status : (task.status === 'done' ? 'done' : 'cancelled'))}`;
+  badge.className = `tt-badge ${task.deleted ? 'cancelled' : (owner ? viewerStatus : (task.status === 'done' ? 'done' : 'cancelled'))}`;
   if (!owner && !task.deleted) badge.classList.add('tt-badge-passive');
   badge.onclick = e => e.stopPropagation();
 
@@ -1423,7 +1756,7 @@ function ttRenderBadge(task, container) {
     label.textContent = 'Корзина';
     label.title = 'Удалена · колонка Закрыта';
   } else if (owner) {
-    label.textContent = TT.statusLabels[task.status] || task.status;
+    label.textContent = TT.statusLabels[viewerStatus] || viewerStatus;
     label.title = 'Выбрать статус';
     label.onclick = (e) => {
       e.stopPropagation();
@@ -1439,7 +1772,7 @@ function ttRenderBadge(task, container) {
   }
   badge.appendChild(label);
 
-  if (!task.deleted && owner && TT.nextStatus[task.status]) {
+  if (!task.deleted && owner && TT.nextStatus[viewerStatus]) {
     const arrow = document.createElement('span');
     arrow.className = 'tt-badge-arrow';
     arrow.textContent = '▶';
@@ -1753,11 +2086,13 @@ function ttRenderCard(task) {
   const card = document.createElement('div');
   card.className = `tt-card ${ttCardClass(task)}`;
   card.dataset.taskId = task.id;
+  if (ttTaskUnread(task)) card.classList.add('tt-unread');
   if (!ttIsTaskOwner(task)) card.classList.add('tt-card-watch');
   if (task.deleted) card.classList.add('deleted');
   if (ttEffectiveShowAll() && task.assignee && task.assignee !== ttState.viewer) {
     card.classList.add('tt-card-other');
   }
+  if (ttIsAgentWorkingTask(task.id)) card.classList.add('tt-agent-working');
 
   const titleWrap = document.createElement('div');
   titleWrap.className = 'tt-card-title-wrap';
@@ -1902,6 +2237,8 @@ function ttRenderBoard() {
   } else {
     for (const task of sorted) listView.appendChild(ttRenderCard(task));
   }
+
+  ttApplyAgentWorkingUi();
 }
 
 function ttRenderPointsBar(task) {
@@ -1936,6 +2273,17 @@ async function ttSavePoints(task) {
   } catch (err) {
     ttNotify('⚠️ ' + err.message, 'system');
   }
+}
+
+function ttRenderHandoffLine(c) {
+  const el = document.createElement('div');
+  el.className = 'tt-handoff-line';
+  const parsed = ttParseHandoffComment(c);
+  const when = ttFormatDate(c.created_at);
+  el.textContent = parsed
+    ? `Задача передана: ${parsed.from} → ${parsed.to}${when ? ` · ${when}` : ''}`
+    : (c.text || '');
+  return el;
 }
 
 function ttCommentVersionBlocks(comment, showAll) {
@@ -2107,13 +2455,32 @@ function ttRenderComments(task) {
       return ta.localeCompare(tb);
     });
   if (!comments.length) {
-    const owner = ttIsTaskOwner(task);
-    commentsEl.innerHTML = owner ? '' : '<div class="tt-empty">Комментариев пока нет</div>';
+    commentsEl.innerHTML = '<div class="tt-empty">Комментариев пока нет</div>';
   } else {
+    const taskReadAt = ttGetTaskReadAt(task.id);
+    let latestStartId = null;
+    if (ttIsAgentWorkingTask(task.id)) {
+      for (let i = comments.length - 1; i >= 0; i--) {
+        const c = comments[i];
+        if (!c.deleted && ttIsAgentStartComment(c)) {
+          latestStartId = c.id;
+          break;
+        }
+      }
+    }
     for (const c of comments) {
+      if (ttIsHandoffComment(c)) {
+        commentsEl.appendChild(ttRenderHandoffLine(c));
+        continue;
+      }
       const block = document.createElement('div');
       block.className = 'tt-comment' + (c.deleted ? ' deleted' : '');
       block.dataset.commentId = c.id;
+      if (ttCommentUnread(c, taskReadAt)) block.classList.add('tt-unread');
+      if (c.id === latestStartId) {
+        block.dataset.agentStart = '1';
+        block.classList.add('tt-agent-working');
+      }
 
       if (ttState.editingCommentId === c.id && !c.deleted) {
         const draft = ttState.commentEditDrafts[c.id];
@@ -2159,6 +2526,7 @@ function ttRenderComments(task) {
             e.preventDefault();
             ttOpenCommentCtxMenu(e, task, c);
           });
+          ttBindCommentReadHandlers(block, task, c);
         }
       }
       commentsEl.appendChild(block);
@@ -2252,38 +2620,44 @@ function ttRenderDetail(task, opts = {}) {
   if (composer) composer.hidden = false;
   if (transferGroup) transferGroup.style.display = '';
   if (closeRow) closeRow.style.display = canHandoff ? '' : 'none';
-  if (owner) {
-    if (ttState.draft.taskId !== task.id) {
-      ttResetDraft(true);
-      ttState.draft.taskId = task.id;
-    }
-    if (preserveDraftFocus && ttDraftInputFocused()) {
-      // Auto-refresh while typing: never touch the live textarea/cursor.
-      const authorCollapsed = document.getElementById('tt-draft-author-collapsed');
-      if (authorCollapsed) authorCollapsed.textContent = ttState.viewer;
-      const author = document.getElementById('tt-draft-author');
-      if (author) author.textContent = ttState.viewer;
-      const card = document.getElementById('tt-detail-composer');
-      const body = document.getElementById('tt-draft-body');
-      const collapsed = document.getElementById('tt-draft-collapsed');
-      if (card) card.dataset.collapsed = '0';
-      if (body) body.hidden = false;
-      if (collapsed) collapsed.hidden = true;
-    } else {
-      ttApplyDraftToComposer({ restoreFocus: false, preventScroll: true });
-    }
+  if (ttState.draft.taskId !== task.id) {
+    ttResetDraft(true);
+    ttState.draft.taskId = task.id;
+    ttState.draft.expanded = true;
+  }
+  if (preserveDraftFocus && ttDraftInputFocused()) {
+    const authorCollapsed = document.getElementById('tt-draft-author-collapsed');
+    if (authorCollapsed) authorCollapsed.textContent = ttState.viewer;
+    const author = document.getElementById('tt-draft-author');
+    if (author) author.textContent = ttState.viewer;
+    const card = document.getElementById('tt-detail-composer');
+    const body = document.getElementById('tt-draft-body');
+    const collapsed = document.getElementById('tt-draft-collapsed');
+    if (card) card.dataset.collapsed = '0';
+    if (body) body.hidden = false;
+    if (collapsed) collapsed.hidden = true;
+  } else {
+    ttState.draft.expanded = true;
+    ttApplyDraftToComposer({ restoreFocus: false, preventScroll: true });
   }
 
   const body = document.getElementById('tt-detail-body');
   if (body && bodyScroll != null && Number.isFinite(bodyScroll)) {
     body.scrollTop = bodyScroll;
   }
+
+  const popup = document.getElementById('tt-detail-popup');
+  if (popup) popup.classList.toggle('tt-agent-working', ttIsAgentWorkingTask(task.id));
 }
 
 function ttUpdateRoleSwitchButtons() {
   document.querySelectorAll('.tt-role-switch').forEach(btn => {
     const role = btn.dataset.role;
     btn.classList.toggle('is-current-role', role === ttState.viewer);
+    const digit = TT_ROLE_HOTKEY[role];
+    btn.title = digit
+      ? `Выбрать ${role} (${digit}, Alt+${digit})`
+      : `Выбрать ${role}`;
   });
 }
 
@@ -2292,8 +2666,8 @@ function ttUpdateTransferButtons(task) {
   ttUpdateRoleSwitchButtons();
   const sameRole = !!task && ttState.viewer === task.assignee;
   document.querySelectorAll('.tt-transfer-go').forEach(btn => {
-    btn.disabled = !ttState.viewer || sameRole;
-    btn.title = sameRole ? 'Выберите другую роль (1–3 или Alt+1–3)' : 'Передать (Alt+Enter)';
+    btn.disabled = !ttState.viewer;
+    btn.title = sameRole ? TT_TIP_TRANSFER_SAME_ROLE : TT_TIP_TRANSFER;
   });
   const closeBtn = document.getElementById('tt-close-task-btn');
   if (closeBtn) closeBtn.disabled = !canHandoff;
@@ -2370,12 +2744,15 @@ function ttOpenDetail(taskId) {
   ttState.editingCommentId = null;
   ttState.manualEditing = false;
   const task = ttGetTask(taskId);
-  if (task && ttIsTaskOwner(task)) ttBeginHandoff(taskId);
+  if (task && task.status !== 'cancelled') ttBeginHandoff(taskId);
   if (ttState.draft.taskId !== taskId) {
     ttResetDraft(true);
     ttState.draft.taskId = taskId;
+    ttState.draft.expanded = true;
   }
+  if (task) ttMarkTaskRead(task);
   ttRenderDetail(task);
+  if (task) ttRenderBoard();
   document.getElementById('tt-detail-overlay').classList.add('open');
 }
 
@@ -2683,13 +3060,40 @@ function ttRenderDraftCard({ skipStarsIfSame = false } = {}) {
   }
 }
 
+function ttSetComposerSendEnabled(send, enabled) {
+  if (!send) return;
+  send.removeAttribute('disabled');
+  send.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  send.classList.toggle('visible', enabled);
+}
+
+function ttComposerSendEnabled(send) {
+  return send?.getAttribute('aria-disabled') !== 'true';
+}
+
+function ttWireComposerSend(btn, onSend) {
+  if (!btn || btn.dataset.sendWired) return;
+  btn.dataset.sendWired = '1';
+  btn.title = TT_TIP_SEND;
+  let lastAt = 0;
+  const fire = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!ttComposerSendEnabled(btn)) return;
+    const now = Date.now();
+    if (now - lastAt < 400) return;
+    lastAt = now;
+    onSend();
+  };
+  btn.addEventListener('click', fire);
+}
+
 function ttSyncDraftComposer({ scroll = false } = {}) {
   const ta = document.getElementById('tt-comment-input');
   const send = document.getElementById('tt-composer-send');
   if (!ta || !send) return;
   const hasText = !!ta.value.trim();
-  send.disabled = !hasText;
-  send.classList.toggle('visible', hasText);
+  ttSetComposerSendEnabled(send, hasText);
   const prev = ta.style.height;
   ta.style.height = '24px';
   const next = `${Math.max(24, ta.scrollHeight)}px`;
@@ -2744,13 +3148,15 @@ function ttWireDraftComposer() {
       if (ta.value.trim()) ttSubmitDraftComment();
     }
   });
-  document.getElementById('tt-composer-send')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    ttSubmitDraftComment();
+  const sendBtn = document.getElementById('tt-composer-send');
+  ttWireComposerSend(sendBtn, () => {
+    const input = document.getElementById('tt-comment-input');
+    if (input?.value?.trim()) ttSubmitDraftComment();
   });
 }
 
 async function ttSubmitDraftComment() {
+  if (ttState.draftSubmitting) return;
   const task = ttGetTask(ttState.detailTaskId);
   if (!task) return;
   const ta = document.getElementById('tt-comment-input');
@@ -2759,6 +3165,7 @@ async function ttSubmitDraftComment() {
   const from = ttState.draft.startedAt || new Date().toISOString();
   const to = new Date().toISOString();
   const stars = Math.max(0, Math.min(99, Number(ttState.draft.stars) || 0));
+  ttState.draftSubmitting = true;
   try {
     await ttAddComment(task.id, ttState.viewer, text, {
       stars,
@@ -2770,7 +3177,10 @@ async function ttSubmitDraftComment() {
     if (ta) ta.value = '';
     ttSyncDraftComposer({ scroll: true });
   } catch (err) {
+    ttPlaySound('error');
     ttNotify('⚠️ ' + err.message, 'system');
+  } finally {
+    ttState.draftSubmitting = false;
   }
 }
 
@@ -2889,8 +3299,7 @@ function ttSyncComposer(root) {
   const send = root.querySelector('.tt-composer-send');
   if (!ta || !send) return;
   const hasText = !!ta.value.trim();
-  send.disabled = !hasText;
-  send.classList.toggle('visible', hasText);
+  ttSetComposerSendEnabled(send, hasText);
   // Same grow behavior as task draft composer — long comments stay readable.
   const maxH = Math.max(160, Math.floor(window.innerHeight * 0.55));
   const minH = 24;
@@ -2914,7 +3323,9 @@ function ttWireComposer(root, onSend) {
       if (ta.value.trim()) onSend();
     }
   });
-  send?.addEventListener('click', onSend);
+  ttWireComposerSend(send, () => {
+    if (ta?.value?.trim()) onSend();
+  });
   ttSyncComposer(root);
 }
 
@@ -2952,6 +3363,13 @@ function ttStartAutoRefresh() {
 }
 
 function ttInitTaskBoard() {
+  ttLoadReadRoot();
+  ttDeviceOrigin();
+  const unlockAudio = () => {
+    ttEnsureAudio();
+    document.removeEventListener('pointerdown', unlockAudio, true);
+  };
+  document.addEventListener('pointerdown', unlockAudio, true);
   ttUpdateHeaderRole();
   ttUpdateRoleSwitchButtons();
   document.getElementById('tt-header-role')?.addEventListener('click', (e) => {
@@ -2975,6 +3393,7 @@ function ttInitTaskBoard() {
 
   document.getElementById('tt-editor-wrap')?.classList.add('visible');
   ttStartAutoRefresh();
+  ttStartWorkerPoll();
   ttLoadTasks().catch(() => {});
 
   const showAllCb = document.getElementById('tt-show-all');
@@ -3100,6 +3519,7 @@ function ttInitTaskBoard() {
       const data = await r.json().catch(() => ({}));
       if (r.ok && data.ok) {
         ttNotify('✅ AI-воркер перезапущен', 'success');
+        ttPollWorkerStatus().catch(() => {});
       } else {
         ttNotify('⚠️ Ошибка перезапуска: ' + (data.output || data.error || r.status), 'error');
       }

@@ -183,6 +183,7 @@
 .tt-board-body {
   flex: 1;
   overflow: auto;
+  overflow-x: hidden;
   padding: 12px;
 }
 .tt-board-body.list-mode .tt-kanban { display: none; }
@@ -194,6 +195,9 @@
   gap: 8px;
   height: 100%;
   min-height: 420px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .tt-col {
   background: #0b1220;
@@ -325,6 +329,8 @@
 .tt-card.in-progress { border-left: 3px solid #38bdf8; }
 .tt-card.ready { border-left: 3px solid #86efac; }
 .tt-card.closed { border-left: 3px solid #64748b; opacity: 0.75; }
+.tt-card.ready.tt-card-watch { opacity: 0.72; }
+.tt-card.ready.tt-card-watch .tt-card-title { color: #94a3b8; }
 .tt-card.deleted { opacity: 0.55; border-style: dashed; border-left-color: #64748b; }
 .tt-card.deleted.ready { border-left-color: #64748b; }
 .tt-card.deleted .tt-badge { background: #334155; color: #94a3b8; border-color: #475569; }
@@ -585,6 +591,15 @@
   border-top: 1px dashed #475569;
   margin: 10px 0;
 }
+.tt-handoff-line {
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 6px 8px;
+  margin: 4px 0;
+  border-top: 1px dashed #334155;
+  border-bottom: 1px dashed #334155;
+}
 .tt-comment-foot {
   display: flex;
   align-items: center;
@@ -738,9 +753,10 @@
   opacity: 1;
   transform: none;
   pointer-events: auto;
+  touch-action: manipulation;
   position: static;
 }
-#tt-transfer-composer .tt-composer-send:disabled {
+#tt-transfer-composer .tt-composer-send[aria-disabled="true"] {
   opacity: 0.35;
   pointer-events: none;
 }
@@ -786,8 +802,8 @@
   transform: scale(1);
   pointer-events: auto;
 }
-.tt-composer-send:disabled { opacity: 0; pointer-events: none; }
-.tt-composer-send:not(:disabled):hover { background: #1d4ed8; }
+.tt-composer-send[aria-disabled="true"] { opacity: 0; pointer-events: none; }
+.tt-composer-send[aria-disabled="false"]:hover { background: #1d4ed8; }
 
 .tt-transfer-group { display: flex; flex-direction: column; gap: 6px; }
 .tt-transfer-label {
@@ -1059,15 +1075,18 @@
 @media (max-width: 520px) {
   #tt-board-popup {
     width: 100vw;
-    height: calc(100vh - var(--app-header-h, 52px));
+    height: calc(100dvh - var(--app-header-h, 52px));
     border-radius: 0;
     border-left: none;
     border-right: none;
   }
+  .tt-board-body { padding: 8px 6px; overflow-x: hidden; }
   .tt-kanban {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
+    gap: 6px;
   }
+  .tt-col { min-width: 0; }
   .tt-board-header { padding: 8px 10px; }
   .tt-board-header-top h2 { font-size: 14px; }
   .tt-board-controls label:not(.tt-show-all-toggle) { display: none; }
@@ -1230,6 +1249,9 @@
 .tt-draft-actions .tt-composer-send {
   position: static;
   opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  touch-action: manipulation;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -1241,7 +1263,7 @@
   align-items: center;
   justify-content: center;
 }
-.tt-draft-actions .tt-composer-send:disabled { opacity: 0.35; cursor: default; }
+.tt-draft-actions .tt-composer-send[aria-disabled="true"] { opacity: 0.35; cursor: default; pointer-events: none; }
 .tt-draft-actions .tt-composer-attach {
   background: transparent;
   border: none;
@@ -1415,3 +1437,112 @@
   color: #e0f2fe;
 }
 .tt-feature-node .pad { display: inline-block; width: 14px; }
+
+/* Animated rainbow border while AI agent works on a task */
+@property --tt-agent-snake-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.tt-agent-working {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  --tt-agent-snake-angle: 0deg;
+}
+
+.tt-agent-working::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--tt-agent-snake-angle),
+    transparent 0deg 290deg,
+    #38bdf8 300deg,
+    #818cf8 315deg,
+    #c084fc 330deg,
+    #f472b6 345deg,
+    #fb923c 355deg,
+    #fbbf24 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: tt-agent-border-snake 2.4s linear infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes tt-agent-border-snake {
+  to { --tt-agent-snake-angle: 360deg; }
+}
+
+.tt-card.tt-agent-working {
+  border-color: transparent;
+}
+
+#tt-detail-popup.tt-agent-working {
+  overflow: visible;
+  border-color: transparent;
+}
+
+#tt-detail-popup.tt-agent-working .tt-detail-body {
+  overflow-y: auto;
+  border-radius: 0 0 12px 12px;
+}
+
+.tt-comment.tt-agent-working {
+  border-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tt-agent-working::before {
+    animation: none;
+    --tt-agent-snake-angle: 45deg;
+    background: conic-gradient(
+      from var(--tt-agent-snake-angle),
+      transparent 0deg 290deg,
+      #38bdf8 300deg,
+      #818cf8 315deg,
+      #c084fc 330deg,
+      #f472b6 345deg,
+      #fb923c 355deg,
+      #fbbf24 360deg
+    );
+  }
+  .tt-unread { animation: none !important; }
+}
+
+/* Unread tasks: bold title on board cards only */
+.tt-card.tt-unread .tt-card-title {
+  font-weight: 700;
+}
+
+/* Unread comments: left accent stripe + dot before timestamp */
+.tt-comment.tt-unread {
+  border: 1px solid #1e293b;
+  border-left: 3px solid #38bdf8;
+}
+.tt-comment.tt-unread .tt-comment-version:not(.stale) .tt-comment-time::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.tt-comment.tt-unread .tt-comment-version:not(.stale) .tt-comment-time {
+  display: inline-flex;
+  align-items: center;
+}

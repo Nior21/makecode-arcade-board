@@ -106,10 +106,36 @@ function mcRenderHeaderProject() {
   }
 }
 
+function mcSetBoardRepoError(text) {
+  const el = document.getElementById('mc-board-repo-error');
+  if (el) el.textContent = text || '';
+}
+
+function mcSetBoardRepoBusy(busy) {
+  const btn = document.getElementById('mc-board-repo-save');
+  if (btn) btn.disabled = !!busy;
+}
+
+function mcFormatBoardRepoSummary(linked) {
+  if (linked?.owner && linked?.repo) return `Repo — ${linked.owner}/${linked.repo}`;
+  return 'Система заявок — GitHub repo';
+}
+
+function mcPopulateBoardRepoInput() {
+  const input = document.getElementById('mc-board-repo');
+  const linked = MC.boardStatus?.linked;
+  if (input && linked?.owner && linked?.repo) {
+    input.value = `${linked.owner}/${linked.repo}`;
+  }
+  const summary = document.getElementById('mc-board-inline-summary');
+  if (summary) summary.textContent = mcFormatBoardRepoSummary(linked);
+}
+
 async function mcRefreshBoardStatus() {
   try {
     MC.boardStatus = await mcApi('/api/board/status');
     mcRenderHeaderProject();
+    mcPopulateBoardRepoInput();
     return MC.boardStatus;
   } catch (_) {
     MC.boardStatus = MC.boardStatus || { version: 'v.1.0.0' };
@@ -285,8 +311,14 @@ function mcRenderBoardProjectRow(host) {
   linkBtn.type = 'button';
   linkBtn.className = 'mc-btn secondary';
   linkBtn.textContent = 'Repo';
-  linkBtn.title = 'Привязать GitHub-репозиторий';
-  linkBtn.addEventListener('click', () => mcLinkBoardRepo());
+  linkBtn.title = 'Показать поле репозитория';
+  linkBtn.addEventListener('click', () => {
+    const block = document.getElementById('mc-board-inline');
+    if (block) {
+      block.setAttribute('open', '');
+      document.getElementById('mc-board-repo')?.focus();
+    }
+  });
   const pull = document.createElement('button');
   pull.type = 'button';
   pull.className = 'mc-btn secondary';
@@ -429,24 +461,52 @@ async function mcDoBoardPush() {
   }
 }
 
-async function mcLinkBoardRepo() {
-  const current = MC.boardStatus?.linked;
-  const def = current ? `${current.owner}/${current.repo}` : '';
-  const raw = prompt('GitHub repo (owner/name):', def);
-  if (!raw) return;
-  const m = raw.trim().match(/^([^/]+)\/([^/]+)$/);
-  if (!m) {
-    mcNotify('⚠️ Формат: owner/repo');
+async function mcSaveBoardRepo() {
+  const input = document.getElementById('mc-board-repo');
+  const raw = input?.value?.trim();
+  mcSetBoardRepoError('');
+  if (!raw) {
+    mcSetBoardRepoError('Укажите owner/repo');
     return;
   }
+  const parsed = parseRepoRefClient(raw);
+  if (!parsed) {
+    mcSetBoardRepoError('Формат: owner/repo');
+    return;
+  }
+  mcSetBoardRepoBusy(true);
   try {
-    await mcApi('/api/board/link', { method: 'POST', body: JSON.stringify({ owner: m[1], repo: m[2] }) });
-    mcNotify(`✓ Привязано: ${m[1]}/${m[2]}`);
+    await mcApi('/api/board/link', {
+      method: 'POST',
+      body: JSON.stringify({ owner: parsed.owner, repo: parsed.repo, repoFull: raw }),
+    });
+    mcNotify(`✓ Привязано: ${parsed.owner}/${parsed.repo}`);
     await mcRefreshBoardStatus();
     mcRenderProjectList();
   } catch (err) {
+    mcSetBoardRepoError(err.message);
     mcNotify('⚠️ ' + err.message);
+  } finally {
+    mcSetBoardRepoBusy(false);
   }
+}
+
+function parseRepoRefClient(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return null;
+  s = s.replace(/^https?:\/\/github\.com\//i, '');
+  s = s.replace(/\.git$/i, '');
+  s = s.replace(/\/+$/, '');
+  const m = s.match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2] };
+}
+
+async function mcLinkBoardRepo() {
+  document.getElementById('mc-board-inline')?.setAttribute('open', '');
+  const input = document.getElementById('mc-board-repo');
+  if (input) input.focus();
+  else await mcSaveBoardRepo();
 }
 
 async function mcSaveCursorKey() {
@@ -629,6 +689,10 @@ function mcInitGithubSync() {
   document.getElementById('mc-gh-logout')?.addEventListener('click', mcLogoutGh);
   document.getElementById('mc-cursor-save')?.addEventListener('click', mcSaveCursorKey);
   document.getElementById('mc-cursor-logout')?.addEventListener('click', mcLogoutCursor);
+  document.getElementById('mc-board-repo-save')?.addEventListener('click', mcSaveBoardRepo);
+  document.getElementById('mc-board-repo')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') mcSaveBoardRepo();
+  });
   document.getElementById('mc-project-refresh')?.addEventListener('click', () => {
     mcRenderProjectList({ loadingRemote: true });
     mcLoadProjects({ refresh: true })
