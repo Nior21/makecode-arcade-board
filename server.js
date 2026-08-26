@@ -92,11 +92,9 @@ function freeTTPort() {
     `pkill -f '${TT_DIR.replace(/'/g, "'\\''")}/http-server.js' 2>/dev/null || true`,
     `pkill -f 'node http-server.js' 2>/dev/null || true`,
     `fuser -k ${port}/tcp 2>/dev/null || true`,
-    `for pid in $(ss -tlnp 2>/dev/null | grep ':${port}' | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | sort -u); do`,
-    `  kill -9 "$pid" 2>/dev/null || true`,
-    `done`,
+    `for pid in $(ss -tlnp 2>/dev/null | grep ':${port} ' | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | sort -u); do kill -9 "$pid" 2>/dev/null || true; done`,
     `sleep 1`,
-    `(ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ':${port}' && echo busy || echo free`,
+    `(ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ':${port} ' && echo busy || echo free`,
   ].join('; '));
 }
 
