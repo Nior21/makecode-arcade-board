@@ -19,6 +19,16 @@ function isHandoffComment(c) {
   return /^↪ Передано:/.test(text) || /^Агент, передаю/i.test(text);
 }
 
+function isWorkerErrorComment(c) {
+  return /^⛔ tt-agent-worker ошибка:/.test(c?.text || '');
+}
+
+function isAgentDeliveryComment(c) {
+  if (!c || c.deleted || c.author !== 'AI_Agent') return false;
+  if (isAgentStartComment(c) || isHandoffComment(c) || isWorkerErrorComment(c)) return false;
+  return true;
+}
+
 /** Reuse an existing start ping if the run was interrupted (worker restart). */
 function findReusableStartComment(task) {
   const comments = visibleComments(task);
@@ -69,7 +79,7 @@ async function finalizeAgentRun(taskId, { startCommentId, startedAt }, { log = c
     try {
       const task = await getTask(taskId);
       resultComment = visibleComments(task)
-        .filter(c => c.id !== startCommentId && c.author === 'AI_Agent' && !isAgentStartComment(c))
+        .filter(c => c.id !== startCommentId && isAgentDeliveryComment(c))
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
       if (resultComment) break;
     } catch (err) {
@@ -224,7 +234,6 @@ export async function runAgentJob(job, { log = console.error } = {}) {
 
     const status = result?.status || 'unknown';
     log(`[runner] finished status=${status}`);
-    await safeFinalize();
     // Agent posts its own TT comment via MCP; skip auto-summary to avoid duplicates.
     return { status, result };
   } catch (err) {
@@ -233,9 +242,10 @@ export async function runAgentJob(job, { log = console.error } = {}) {
       : String(err?.message || err);
     log(`[runner] fail: ${msg}`);
     await addComment(taskId, 'AI_Agent', `⛔ tt-agent-worker ошибка: ${msg}`).catch(() => {});
-    await safeFinalize();
     throw err;
   } finally {
     clearTimeout(timer);
+    // finalize in finally — never treat post-run cleanup as Agent.prompt failure
+    await safeFinalize();
   }
 }

@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { memoryOk, systemPressure } from './memguard.js';
 import { persistQueue, loadQueue } from './recovery.js';
+import { exitIfStale } from './reload.js';
 
 /**
  * Single-flight FIFO queue. maxConcurrent is forced to 1 for RPI safety.
@@ -107,6 +108,8 @@ export function createQueue({ runJob, log = console.error }) {
           save();
           // Brief cooldown so OS can reclaim pages before next agent
           await sleep(3_000);
+          // Pick up runner.js fixes from agent commits without manual 🔄
+          exitIfStale(log);
         }
       }
     } finally {
