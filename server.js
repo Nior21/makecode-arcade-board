@@ -633,7 +633,7 @@ const server = http.createServer((req, res) => {
       }
       const ssh = remoteSupport.buildSshCommand(body.user, body.host, sess.code);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: true, ...sess, ssh });
+      res.end(JSON.stringify({ ok: true, ...sess, ssh }));
     }).catch((err) => {
       res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: err.message }));
