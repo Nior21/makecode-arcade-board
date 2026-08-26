@@ -43,7 +43,7 @@ function mcSupportRenderDiagnostics(box, diag) {
     : 'не определены (нужен Wi‑Fi или Tailscale)';
   box.innerHTML = `
     <div class="mc-gh-status-line">Версия: ${mcSupportEsc(diag.boardVersion || '—')} · Node ${mcSupportEsc(diag.node || '—')}</div>
-    <p class="mc-gh-hint">TT: ${diag.stack?.tt?.ok ? '✓' : '✗'} · Worker: ${diag.stack?.worker?.running ? '✓' : '✗'} · SSH: ${diag.ssh?.listening ? '✓' : '✗'}</p>
+    <p class="mc-gh-hint">TT: ${diag.stack?.tt?.ok ? '✓' : '✗'} · Worker: ${diag.stack?.worker?.running ? '✓' : '✗'} · Webhook: ${diag.stack?.webhook?.enabled ? '✓' : '✗'} · SSH: ${diag.ssh?.listening ? '✓' : '✗'}</p>
     ${mcSupportIssuesHtml(diag.issues)}
     <p class="mc-gh-hint">IP: ${addrs}</p>`;
 }

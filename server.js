@@ -344,8 +344,22 @@ function fetchTTHealth() {
   });
 }
 
+function fetchWebhookStatus() {
+  return new Promise((resolve) => {
+    const req = http.get(`${TT_BASE}/api/webhooks/status`, { timeout: 2000 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (_) { resolve({ enabled: false, configured: false }); }
+      });
+    });
+    req.on('error', () => resolve({ enabled: false, error: 'unreachable' }));
+    req.on('timeout', () => { req.destroy(); resolve({ enabled: false, error: 'timeout' }); });
+  });
+}
+
 function fetchStackStatus() {
-  return Promise.all([fetchTTHealth(), runSupervisor(['status']), fetchWorkerHealth()]).then(([tt, sup, health]) => {
+  return Promise.all([fetchTTHealth(), runSupervisor(['status']), fetchWorkerHealth(), fetchWebhookStatus()]).then(([tt, sup, health, webhook]) => {
     let worker = { running: false, pid: null };
     if (sup.ok && sup.stdout) {
       try { worker = JSON.parse(sup.stdout); } catch (_) {}
@@ -357,6 +371,11 @@ function fetchStackStatus() {
         pid: worker.pid || null,
         apiKey: health?.apiKey === true,
         activeTaskId: health?.queue?.active?.taskId || null,
+      },
+      webhook: {
+        enabled: webhook?.enabled === true,
+        configured: webhook?.configured === true,
+        urlHost: webhook?.url_host || null,
       },
     };
   });

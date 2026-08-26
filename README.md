@@ -25,6 +25,7 @@ cd makecode-arcade
 npm install --no-bin-links
 cd cursor-agent/tt-agent-worker && npm install --no-bin-links
 cp .env.example .env   # свой CURSOR_API_KEY
+cp ../task-tracker/.env.example ../task-tracker/.env   # webhook → воркер (создаётся и автоматически)
 ```
 
 ### 2. Запуск

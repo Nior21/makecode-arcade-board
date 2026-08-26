@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
+/** Board repo root (makecode-arcade-board clone). */
+const BOARD_ROOT = resolve(ROOT, '../..');
 
 function loadDotEnv() {
   const p = resolve(ROOT, '.env');
@@ -25,8 +27,8 @@ function loadDotEnv() {
 loadDotEnv();
 
 const PROJECT_CWDS = {
-  'cursor-agent': '/storage/emulated/0/Projects/cursor-agent',
-  'makecode-arcade': '/storage/emulated/0/Projects/makecode-arcade',
+  'cursor-agent': resolve(BOARD_ROOT, 'cursor-agent'),
+  'makecode-arcade': BOARD_ROOT,
 };
 
 export const config = {
@@ -52,7 +54,8 @@ export const config = {
    *  worker force-exits so the supervisor restarts it. */
   watchdogTimeoutMs: Math.max(60_000, parseInt(process.env.TT_WORKER_WATCHDOG_MS || '', 10) || 0) || null,
   projectCwds: { ...PROJECT_CWDS, ...(parseJsonMap(process.env.TT_WORKER_PROJECT_CWDS)) },
-  defaultCwd: process.env.TT_WORKER_DEFAULT_CWD || '/storage/emulated/0/Projects/cursor-agent',
+  defaultCwd: process.env.TT_WORKER_DEFAULT_CWD || BOARD_ROOT,
+  boardRoot: BOARD_ROOT,
 };
 
 function parseJsonMap(raw) {
@@ -67,5 +70,8 @@ function parseJsonMap(raw) {
 
 export function cwdForProject(project) {
   const key = String(project || '').trim();
-  return config.projectCwds[key] || config.defaultCwd;
+  if (config.projectCwds[key]) return config.projectCwds[key];
+  const gameDir = resolve(BOARD_ROOT, 'games', key);
+  if (existsSync(gameDir)) return gameDir;
+  return config.defaultCwd;
 }

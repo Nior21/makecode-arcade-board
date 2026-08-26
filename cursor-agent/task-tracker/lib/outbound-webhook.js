@@ -13,7 +13,7 @@
  * Shell env vars take precedence over `.env` values.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -39,8 +39,23 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+/** Create task-tracker/.env from .env.example on first run (fresh clone). */
+function ensureTTEnvFile() {
+  const envPath = resolve(ROOT, '.env');
+  if (existsSync(envPath)) return { created: false };
+  const examplePath = resolve(ROOT, '.env.example');
+  const content = existsSync(examplePath)
+    ? readFileSync(examplePath, 'utf8')
+    : `TT_WEBHOOK_URL=${DEFAULT_WEBHOOK_URL}\nTT_WEBHOOK_ASSIGNEE=AI_Agent\n`;
+  writeFileSync(envPath, content);
+  loadDotEnv();
+  return { created: true };
+}
+
+const DEFAULT_WEBHOOK_URL = 'http://127.0.0.1:9080/hook';
+
 function webhookConfig() {
-  const url = String(process.env.TT_WEBHOOK_URL || '').trim();
+  const url = String(process.env.TT_WEBHOOK_URL || DEFAULT_WEBHOOK_URL).trim();
   const enabled = process.env.TT_WEBHOOK_ENABLED !== '0' && !!url;
   return {
     enabled,
@@ -169,4 +184,6 @@ export {
   buildAssigneeWebhookPayload,
   postWebhook,
   maybeNotifyAssigneeToAgent,
+  ensureTTEnvFile,
+  DEFAULT_WEBHOOK_URL,
 };

@@ -14,6 +14,7 @@ import {
   buildAssigneeWebhookPayload,
   postWebhook,
   maybeNotifyAssigneeToAgent,
+  ensureTTEnvFile,
 } from './lib/outbound-webhook.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -414,6 +415,63 @@ function listTasks(filter = {}) {
   });
   const limit = filter.limit || 50;
   return tasks.slice(0, limit);
+}
+
+function isAgentStartComment(c) {
+  return c?.author === 'AI_Agent' && /tt-agent-worker:\s*старт/i.test(c?.text || '');
+}
+
+function isAgentResultComment(c) {
+  if (!c || c.deleted || c.author !== 'AI_Agent') return false;
+  if (isAgentStartComment(c)) return false;
+  const text = c.text || '';
+  if (/^↪ Передано:/.test(text)) return false;
+  if (/^Агент, передаю/i.test(text)) return false;
+  return true;
+}
+
+/** Re-fire webhook for open tasks assigned to AI_Agent without a worker run. */
+function recoverOrphanAgentTasks() {
+  const cfg = webhookConfig();
+  if (!cfg.enabled) return { recovered: 0, reason: 'webhook disabled' };
+  const index = loadIndex();
+  let recovered = 0;
+  for (const id of index.tasks) {
+    const task = getTask(id);
+    if (!task || task.deleted) continue;
+    if (task.assignee !== cfg.assignee) continue;
+    if (!['open', 'in_progress'].includes(task.status)) continue;
+    const comments = (task.comments || []).filter(c => !c.deleted);
+    if (comments.some(isAgentStartComment)) continue;
+    if (comments.some(isAgentResultComment)) continue;
+    maybeNotifyAssigneeToAgent({
+      task,
+      prevAssignee: null,
+      actor: 'orphan-recovery',
+      isCreate: true,
+    }, log);
+    recovered++;
+    log(`RECOVER orphan ${task.id.split('-')[0]} — ${task.title}`);
+  }
+  return { recovered };
+}
+
+function replayAgentWebhook(taskRef) {
+  const resolved = resolveTaskId(taskRef);
+  if (!resolved.id) return { ok: false, error: resolved.matches?.length ? 'ambiguous id' : 'not found' };
+  const task = getTask(resolved.id);
+  if (!task) return { ok: false, error: 'not found' };
+  const cfg = webhookConfig();
+  if (task.assignee !== cfg.assignee) {
+    return { ok: false, error: `assignee is ${task.assignee}, not ${cfg.assignee}` };
+  }
+  maybeNotifyAssigneeToAgent({
+    task,
+    prevAssignee: null,
+    actor: 'webhook-replay',
+    isCreate: true,
+  }, log);
+  return { ok: true, task_id: task.id, short_id: task.id.split('-')[0] };
 }
 
 function searchTasks(query) {
@@ -881,6 +939,19 @@ function handleRestApi(req, res, url) {
       }
       const result = await postWebhook(payload, log);
       sendJson(res, result.ok ? 200 : 502, { dry_run: false, result, payload });
+    }).catch(() => sendJson(res, 400, { error: 'invalid json' }));
+    return true;
+  }
+
+  if (parts[0] === 'api' && parts[1] === 'webhooks' && parts[2] === 'replay' && req.method === 'POST' && parts.length === 3) {
+    readJsonBody(req).then((body) => {
+      const ref = body.task_id || body.short_id || body.id;
+      if (!ref) {
+        sendJson(res, 400, { error: 'task_id required' });
+        return;
+      }
+      const result = replayAgentWebhook(ref);
+      sendJson(res, result.ok ? 200 : 404, result);
     }).catch(() => sendJson(res, 400, { error: 'invalid json' }));
     return true;
   }
@@ -1426,5 +1497,13 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  const envCreated = ensureTTEnvFile();
+  if (envCreated.created) log('Created .env from .env.example (webhook defaults)');
+  const cfg = webhookConfig();
+  log(`Webhook ${cfg.enabled ? 'enabled' : 'disabled'} → ${cfg.url || '(none)'}`);
+  setTimeout(() => {
+    const rec = recoverOrphanAgentTasks();
+    if (rec.recovered) log(`Orphan recovery: ${rec.recovered} task(s) re-queued for agent`);
+  }, 1500);
   log(`HTTP MCP server listening on port ${PORT}`);
 });

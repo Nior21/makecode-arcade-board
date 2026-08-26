@@ -1261,8 +1261,9 @@ function ttRenderStackBanner(st) {
   if (!el) return;
   const ttOk = st?.tt?.ok !== false;
   const workerOk = st?.worker?.running !== false;
-  ttState.stackOk = ttOk;
-  if (ttOk && workerOk) {
+  const webhookOk = st?.webhook?.enabled !== false;
+  ttState.stackOk = ttOk && webhookOk;
+  if (ttOk && workerOk && webhookOk) {
     el.hidden = true;
     el.textContent = '';
     return;
@@ -1270,6 +1271,7 @@ function ttRenderStackBanner(st) {
   const parts = [];
   if (!ttOk) parts.push('Task Tracker (:3100) не запущен — задачи не сохраняются');
   if (!workerOk) parts.push('AI-воркер (:9080) не запущен');
+  if (ttOk && workerOk && !webhookOk) parts.push('Webhook агента выключен — передача AI_Agent не запустит воркер (🔄)');
   el.textContent = parts.join(' · ') + '. Нажмите 🔄 или перезапустите node server.js';
   el.hidden = false;
 }
