@@ -719,12 +719,13 @@ const server = http.createServer((req, res) => {
   // Agent commit: semver bump (patch|minor|major) + optional push. taskId → #short в сообщении.
   if (pathname === '/api/board/commit' && req.method === 'POST') {
     parseJsonBody(req).then(async (body) => {
-      const result = await board.commitBoard({
+      const commitOpts = {
         bump: body.bump || 'patch',
         message: body.message || body.body,
         taskId: body.taskId || body.task_id,
-        push: !!body.push,
-      });
+      };
+      if (body.push !== undefined) commitOpts.push = !!body.push;
+      const result = await board.commitBoard(commitOpts);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     }).catch((err) => {
