@@ -78,6 +78,13 @@ function waitForTTHealth(maxMs = 8000, intervalMs = 400) {
   });
 }
 
+function checkTTPort() {
+  const port = TT_PORT;
+  return runShell(
+    `(ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ':${port} ' && echo busy || echo free`,
+  );
+}
+
 /** Free port 3100 — stale listeners survive pkill on Termux. */
 function freeTTPort() {
   const port = TT_PORT;
@@ -383,7 +390,7 @@ function ensureStackRunning() {
 }
 
 function collectTTDiagnostics() {
-  return freeTTPort().then((portCheck) => ({
+  return checkTTPort().then((portCheck) => ({
     ttDir: TT_DIR,
     ttDirExists: fs.existsSync(TT_DIR),
     httpServerExists: fs.existsSync(path.join(TT_DIR, 'http-server.js')),
@@ -426,12 +433,31 @@ function restartTT({ force } = {}) {
     });
     child.unref();
     const spawnPid = child.pid;
-    waitForTTHealth(10000).then((health) => {
+    waitForTTHealth(10000).then(async (health) => {
       if (health.ok) {
         resolve({
           ok: true,
           stdout: `TT restarted (spawn pid ${spawnPid})`,
           error: null,
+        });
+        return;
+      }
+      const portBusy = (await checkTTPort()).stdout === 'busy';
+      if (portBusy) {
+        const retry = await waitForTTHealth(4000);
+        if (retry.ok) {
+          resolve({
+            ok: true,
+            stdout: `TT up (spawn pid ${spawnPid}, slow bind)`,
+            error: null,
+          });
+          return;
+        }
+        resolve({
+          ok: false,
+          stdout: `TT spawn pid ${spawnPid}`,
+          error: retry.error || 'port :3100 busy but TT health check failed',
+          logTail: tailFile(TT_LOG, 30),
         });
         return;
       }
@@ -502,7 +528,11 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/api/stack/diagnostics' && req.method === 'GET') {
-    Promise.all([fetchStackStatus(), collectTTDiagnostics(), probeTTStart(2500)]).then(([stack, ttInfo, probe]) => {
+    Promise.all([fetchStackStatus(), collectTTDiagnostics()]).then(async ([stack, ttInfo]) => {
+      let probe = null;
+      if (!stack.tt.ok) {
+        probe = await probeTTStart(2500);
+      }
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ stack, tt: ttInfo, probe }));
     });

@@ -1418,6 +1418,7 @@ const server = createServer((req, res) => {
 });
 
 if (!existsSync(TASKS_DIR)) mkdirSync(TASKS_DIR, { recursive: true });
+if (!existsSync(join(__dirname, 'logs'))) mkdirSync(join(__dirname, 'logs'), { recursive: true });
 
 server.on('error', (err) => {
   log(`FATAL listen: ${err.code || ''} ${err.message}`);

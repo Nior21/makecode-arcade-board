@@ -20,6 +20,7 @@ Use the webhook payload and TT tools to load the **full** task (description + al
 - Stay on LAN assumptions: TT is at localhost MCP; do not expose secrets.
 - Be careful with RAM/CPU on this Android phone host: avoid huge parallel installs/builds; no unnecessary watchers.
 - Comment in Russian if the task/comments are in Russian.
+- **Remote SSH:** never run interactive SSH to IPs/credentials from comments. Use `timeout 8 ssh -o ConnectTimeout=5 -o BatchMode=yes` only; if unreachable — report blocker in TT comment and assign back. Do not paste passwords into shell commands or comments.
 
 ## Webhook payload
 The JSON below is the trigger context (may be slightly stale — prefer live TT fetch):

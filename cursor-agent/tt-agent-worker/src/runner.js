@@ -52,7 +52,7 @@ async function finalizeAgentRun(taskId, { startCommentId, startedAt }, { log = c
   let resultComment = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      task = await getTask(taskId);
+      const task = await getTask(taskId);
     } catch (err) {
       log(`[runner] finalize get_task failed: ${err.message}`);
       return;
