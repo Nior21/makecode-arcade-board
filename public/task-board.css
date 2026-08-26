@@ -1039,6 +1039,8 @@
   user-select: none;
 }
 .tt-detail-head { cursor: context-menu; }
+.tt-comment-version-meta { cursor: context-menu; }
+.tt-comment-author { cursor: context-menu; }
 
 #tt-create-popup {
   width: min(420px, calc(100vw - 48px));

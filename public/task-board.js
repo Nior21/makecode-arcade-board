@@ -1618,6 +1618,7 @@ async function ttEditComment(taskId, commentId, text, meta = {}) {
   if (meta.deleted === false) body.deleted = false;
   if (meta.stars != null) body.stars = meta.stars;
   if (meta.actor) body.actor = meta.actor;
+  if (meta.author !== undefined) body.author = meta.author;
   const updated = await ttApi(`/tasks/${taskId}/comments/${commentId}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
@@ -2540,6 +2541,10 @@ function ttRenderCommentVersionEl(task, c, ver, isLast, showAll) {
   meta.appendChild(right);
   row.appendChild(meta);
 
+  if (!ver.stale && !ver.deleted && !c.deleted && isLast && ttIsBoardRole()) {
+    ttBindCommentAuthorCtxMenu(meta, task, c);
+  }
+
   const text = document.createElement('div');
   text.className = 'tt-comment-text tt-md';
   text.innerHTML = (!ver.stale && ttIsAgentStartComment(c))
@@ -2668,6 +2673,8 @@ function ttRenderComments(task) {
           ttState.commentEditSelEnd = ta.selectionEnd;
         });
         ttBindMonoCtxMenu(ta);
+        const authorEl = block.querySelector('.tt-comment-author');
+        if (authorEl) ttBindCommentAuthorCtxMenu(authorEl, task, c);
         requestAnimationFrame(() => {
           if (!ta) return;
           const s = ttState.commentEditSelStart;
@@ -2919,6 +2926,121 @@ function ttBindDetailHeadCtxMenu() {
   }, { passive: true });
   head.addEventListener('touchend', () => { clearTimeout(pressTimer); });
   head.addEventListener('touchmove', () => { clearTimeout(pressTimer); });
+}
+
+function ttBindCommentAuthorCtxMenu(el, task, comment) {
+  if (!el || el.dataset.authorCtxBound) return;
+  el.dataset.authorCtxBound = '1';
+  const open = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    ttOpenCommentAuthorCtxMenu(e, task, comment);
+  };
+  el.addEventListener('contextmenu', open);
+  let pressTimer = null;
+  el.addEventListener('touchstart', (e) => {
+    pressTimer = setTimeout(() => open(e), 550);
+  }, { passive: true });
+  el.addEventListener('touchend', () => { clearTimeout(pressTimer); });
+  el.addEventListener('touchmove', () => { clearTimeout(pressTimer); });
+}
+
+function ttOpenCommentAuthorPickMenu(e, task, comment) {
+  ttCloseCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'tt-ctx-menu open';
+  const x = e.clientX || e.touches?.[0]?.clientX || 40;
+  const y = e.clientY || e.touches?.[0]?.clientY || 40;
+  menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 200)}px`;
+
+  const label = document.createElement('div');
+  label.className = 'tt-ctx-label';
+  label.textContent = 'Выберите автора…';
+  menu.appendChild(label);
+
+  for (const role of TT.roles) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = ttRoleLabel(role);
+    if (role === comment.author) {
+      btn.disabled = true;
+      btn.title = 'Текущий автор';
+    } else {
+      btn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ttCloseCtxMenu();
+        try {
+          await ttEditComment(task.id, comment.id, comment.text, {
+            author: role,
+            actor: ttState.viewer,
+          });
+          ttNotify(`✓ Автор: ${ttRoleLabel(role)}`, 'system');
+        } catch (err) {
+          ttNotify('⚠️ ' + err.message, 'system');
+        }
+      });
+    }
+    menu.appendChild(btn);
+  }
+
+  document.body.appendChild(menu);
+  ttState.ctxMenu = menu;
+  const onPointerDown = (ev) => {
+    if (menu.contains(ev.target)) return;
+    ttCloseCtxMenu();
+  };
+  const onKeyDown = (ev) => {
+    if (ev.key === 'Escape') ttCloseCtxMenu();
+  };
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+  }, 0);
+  ttState.ctxMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('keydown', onKeyDown);
+  };
+}
+
+function ttOpenCommentAuthorCtxMenu(e, task, comment) {
+  if (!comment || comment.deleted || !ttIsBoardRole()) return;
+  ttCloseCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'tt-ctx-menu open';
+  const x = e.clientX || e.touches?.[0]?.clientX || 40;
+  const y = e.clientY || e.touches?.[0]?.clientY || 40;
+  menu.style.left = `${Math.min(x, window.innerWidth - 180)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 120)}px`;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Поменять автора';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    ttOpenCommentAuthorPickMenu(ev, task, comment);
+  });
+  menu.appendChild(btn);
+
+  document.body.appendChild(menu);
+  ttState.ctxMenu = menu;
+  const onPointerDown = (ev) => {
+    if (menu.contains(ev.target)) return;
+    ttCloseCtxMenu();
+  };
+  const onKeyDown = (ev) => {
+    if (ev.key === 'Escape') ttCloseCtxMenu();
+  };
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+  }, 0);
+  ttState.ctxMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('keydown', onKeyDown);
+  };
 }
 
 function ttOpenCommentCtxMenu(e, task, comment) {
