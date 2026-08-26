@@ -11,7 +11,7 @@ Use the webhook payload and TT tools to load the **full** task (description + al
 4. **Commit before closing** (if you changed code in the board shell):
    - `POST http://127.0.0.1:3778/api/board/commit` with `{ "bump": "patch"|"minor"|"major", "message": "…", "taskId": "<short_id>" }`.
    - **patch** — fixes; **minor** — features/enhancements; **major** — structural rewrites.
-   - Do **not** push unless asked (`"push": true` only on explicit request).
+   - **Push на GitHub автоматически** при наличии `taskId` (нужен PAT в UI). Явно `"push": false` — только локальный коммит. В комментарии укажи `pushed:true/false` и `pushError` если push не прошёл.
 5. When done: **one short** `add_comment` as **AI_Agent** (what changed + how to test). If you committed, pass `commit_sha`, `short_sha`, `version`, `bump` — TT saves `delivery_commit` on the task. Then assign the right person (`QA_Engineer` or whoever asked). Do **not** post a second summary — the worker no longer duplicates comments.
 6. If blocked (missing key, ambiguous QA, need Developer decision): leave an AI_Agent comment explaining the blocker; do not silently drop the task.
 
