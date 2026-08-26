@@ -431,6 +431,24 @@ function isAgentResultComment(c) {
 }
 
 const WORKER_HEALTH_URL = process.env.TT_WORKER_HEALTH_URL || 'http://127.0.0.1:9080/health';
+const WORKER_QUEUE_STATE = join(__dirname, '..', 'tt-agent-worker', 'queue-state.json');
+
+function readWorkerQueueState() {
+  if (!existsSync(WORKER_QUEUE_STATE)) return null;
+  try {
+    return JSON.parse(readFileSync(WORKER_QUEUE_STATE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function workerQueueHasTask(taskId) {
+  if (!taskId) return false;
+  const state = readWorkerQueueState();
+  if (!state) return false;
+  if (state.active?.taskId === taskId) return true;
+  return (state.queued || []).some(j => j?.taskId === taskId);
+}
 
 async function fetchWorkerQueueState() {
   try {
@@ -443,9 +461,13 @@ async function fetchWorkerQueueState() {
 }
 
 function workerHasTask(health, taskId) {
-  if (!health?.queue || !taskId) return false;
-  if (health.queue.active?.taskId === taskId) return true;
-  return (health.queue.queued || []).some(j => j.taskId === taskId);
+  if (!taskId) return false;
+  if (health?.queue) {
+    if (health.queue.active?.taskId === taskId) return true;
+    if ((health.queue.queued || []).some(j => j.taskId === taskId)) return true;
+  }
+  // /health may not respond while Agent.prompt blocks the event loop — fall back to queue-state.json.
+  return workerQueueHasTask(taskId);
 }
 
 /** Re-fire webhook for open AI_Agent tasks without a completed worker run. */

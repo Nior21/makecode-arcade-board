@@ -56,18 +56,26 @@ is_running() {
 }
 
 # True when queue-state.json shows a recent active job (worker likely busy, not hung).
+# Shell-only parse: Agent.prompt can block the Node event loop so /health stops responding
+# but the job is still running — never SIGKILL during an active job within BUSY_GRACE_SEC.
 worker_recently_busy() {
   [ -f "$QUEUE_STATE" ] || return 1
-  "$NODE_BIN" -e "
-    const fs=require('fs');
-    try {
-      const d=JSON.parse(fs.readFileSync('$QUEUE_STATE','utf8'));
-      const a=d.active;
-      if(!a||!a.startedAt) process.exit(1);
-      const age=(Date.now()-new Date(a.startedAt).getTime())/1000;
-      process.exit(age<$BUSY_GRACE_SEC?0:1);
-    } catch { process.exit(1); }
-  " 2>/dev/null
+  local started_at short_id
+  started_at="$(grep -o '"startedAt":"[^"]*"' "$QUEUE_STATE" 2>/dev/null | head -1 | sed 's/"startedAt":"//;s/"$//')"
+  short_id="$(grep -o '"shortId":"[^"]*"' "$QUEUE_STATE" 2>/dev/null | head -1 | sed 's/"shortId":"//;s/"$//')"
+  [ -n "$started_at" ] || return 1
+  local age_sec
+  age_sec="$("$NODE_BIN" -e "
+    const t=Date.parse(process.argv[1]);
+    if(!Number.isFinite(t)) process.exit(2);
+    process.stdout.write(String(Math.floor((Date.now()-t)/1000)));
+  " "$started_at" 2>/dev/null || echo "")"
+  [ -n "$age_sec" ] || return 1
+  if [ "$age_sec" -lt "$BUSY_GRACE_SEC" ]; then
+    log "worker busy (#${short_id:-?} ${age_sec}s) — skip health kill"
+    return 0
+  fi
+  return 1
 }
 
 start() {
@@ -148,11 +156,11 @@ watch() {
     if ! is_running; then
       log "worker not running — restarting"
       start
-    elif ! curl -sf -m 8 "http://127.0.0.1:9080/health" >/dev/null 2>&1; then
+    elif ! curl -sf -m 15 "http://127.0.0.1:9080/health" >/dev/null 2>&1; then
       if worker_recently_busy; then
-        log "worker health timeout but active job < ${BUSY_GRACE_SEC}s — skip kill"
+        : # logged inside worker_recently_busy
       else
-        log "worker unresponsive — killing and restarting"
+        log "worker unresponsive (no active job in grace) — killing and restarting"
         stop
         sleep 1
         start

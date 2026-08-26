@@ -68,14 +68,14 @@ async function finalizeAgentRun(taskId, { startCommentId, startedAt }, { log = c
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const task = await getTask(taskId);
+      resultComment = visibleComments(task)
+        .filter(c => c.id !== startCommentId && c.author === 'AI_Agent' && !isAgentStartComment(c))
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
+      if (resultComment) break;
     } catch (err) {
       log(`[runner] finalize get_task failed: ${err.message}`);
       return;
     }
-    resultComment = visibleComments(task)
-      .filter(c => c.id !== startCommentId && c.author === 'AI_Agent' && !isAgentStartComment(c))
-      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))[0];
-    if (resultComment) break;
     if (attempt < 3) await new Promise(r => setTimeout(r, 400));
   }
   if (!resultComment) return;
