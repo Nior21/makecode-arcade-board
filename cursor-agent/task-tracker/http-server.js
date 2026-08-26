@@ -1417,6 +1417,8 @@ const server = createServer((req, res) => {
   res.end('Method Not Allowed');
 });
 
+if (!existsSync(TASKS_DIR)) mkdirSync(TASKS_DIR, { recursive: true });
+
 server.listen(PORT, '0.0.0.0', () => {
   log(`HTTP MCP server listening on port ${PORT}`);
 });

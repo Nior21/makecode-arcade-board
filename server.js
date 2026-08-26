@@ -232,6 +232,62 @@ function fetchWorkerHealth() {
   });
 }
 
+function fetchTTHealth() {
+  return new Promise((resolve) => {
+    const req = http.get(`${TT_BASE}/api/projects`, { timeout: 2000 }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body: body.slice(0, 200) });
+      });
+    });
+    req.on('error', (err) => resolve({ ok: false, error: err.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+  });
+}
+
+function fetchStackStatus() {
+  return Promise.all([fetchTTHealth(), runSupervisor(['status']), fetchWorkerHealth()]).then(([tt, sup, health]) => {
+    let worker = { running: false, pid: null };
+    if (sup.ok && sup.stdout) {
+      try { worker = JSON.parse(sup.stdout); } catch (_) {}
+    }
+    return {
+      tt: { ok: !!tt.ok, error: tt.error || null },
+      worker: {
+        running: !!worker.running,
+        pid: worker.pid || null,
+        apiKey: health?.apiKey === true,
+        activeTaskId: health?.queue?.active?.taskId || null,
+      },
+    };
+  });
+}
+
+/** Start TT + worker if not already up (fresh clone often runs only node server.js). */
+function ensureStackRunning() {
+  if (process.env.MC_NO_AUTOSTART === '1') return Promise.resolve();
+  return fetchStackStatus().then((st) => {
+    const jobs = [];
+    if (!st.tt.ok) {
+      console.log('[makecode-arcade] task-tracker offline — starting…');
+      jobs.push(restartTT().then((r) => {
+        console.log('[makecode-arcade]', r.stdout || r.error || 'TT start requested');
+      }));
+    }
+    if (!st.worker.running) {
+      console.log('[makecode-arcade] tt-agent-worker offline — starting…');
+      jobs.push(
+        runSupervisor(['start']),
+        runSupervisor(['ensure-watch']),
+      );
+    }
+    return Promise.all(jobs);
+  }).catch((err) => {
+    console.error('[makecode-arcade] autostart failed:', err.message);
+  });
+}
+
 // Restart the task-tracker (TT, port 3100): kill the current http-server.js
 // process and start a fresh one. TT now loads its webhook config from `.env`,
 // so no env vars are needed here.
@@ -298,6 +354,14 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (pathname === '/api/stack/status' && req.method === 'GET') {
+    fetchStackStatus().then((st) => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(st));
+    });
+    return;
+  }
+
   if (pathname === '/api/worker/status' && req.method === 'GET') {
     Promise.all([runSupervisor(['status']), fetchWorkerHealth()]).then(([r, health]) => {
       let data = { running: false, pid: null, log_tail: '' };
@@ -624,4 +688,5 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`[makecode-arcade] flash supervisor: auto hw=${DEFAULT_HW}`);
   }
   gh.warmProjectsCache();
+  ensureStackRunning();
 });

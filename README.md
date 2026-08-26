@@ -27,7 +27,22 @@ cd cursor-agent/tt-agent-worker && npm install --no-bin-links
 cp .env.example .env   # свой CURSOR_API_KEY
 ```
 
-### 2. Запуск (3 процесса)
+### 2. Запуск
+
+**Проще всего** — один процесс (TT и воркер поднимутся автоматически):
+
+```bash
+cd ~/storage/shared/Projects/makecode-arcade
+bash scripts/start-all.sh
+# или: node server.js
+```
+
+Браузер: `http://127.0.0.1:3778`
+
+Отключить автозапуск TT/воркера: `MC_NO_AUTOSTART=1 node server.js`
+
+<details><summary>Ручной запуск (3 процесса)</summary>
+
 ```bash
 # TT
 cd ~/storage/shared/Projects/makecode-arcade/cursor-agent/task-tracker
@@ -42,7 +57,7 @@ cd ~/storage/shared/Projects/makecode-arcade
 node server.js &
 ```
 
-Браузер: `http://127.0.0.1:3778`
+</details>
 
 ### 3. Авторизация (popup проектов)
 - **GitHub PAT** — Pull/Push движка
@@ -91,3 +106,36 @@ curl -s -X POST http://127.0.0.1:3778/api/board/commit \
 ```
 
 Push — только по запросу (`"push": true` или кнопка Push).
+
+## Диагностика (задачи не сохраняются)
+
+1. **Частая причина:** запущен только `node server.js`, а TT (:3100) не работал. С v1.3.2+ TT и воркер стартуют автоматически; иначе нажмите **🔄** в шапке задач.
+2. Проверка:
+   ```bash
+   curl -s http://127.0.0.1:3778/api/stack/status
+   # tt.ok:true, worker.running:true
+   curl -s http://127.0.0.1:3778/api/tt/projects
+   ```
+3. В UI — красный баннер «Task Tracker не запущен».
+4. Логи: `cursor-agent/task-tracker/logs/http.log`, `cursor-agent/tt-agent-worker.log`.
+5. Node для воркера: **≥ 20** (`node --version`). TT — обычный Node 18+.
+6. После clone: `npm install` в корне **и** в `cursor-agent/tt-agent-worker/`.
+
+## Удалённая помощь (Termux на телефоне коллеги)
+
+Чтобы другой человек мог зайти в Termux и помочь с настройкой:
+
+```bash
+pkg install -y openssh
+passwd                    # пароль для входа по SSH
+sshd                      # порт 8022
+whoami && ip route get 1  # логин и IP
+```
+
+**В одной Wi‑Fi:** `ssh -p 8022 USER@IP_ТЕЛЕФОНА` с ноутбука.
+
+**Через интернет (рекомендуется):** [Tailscale](https://tailscale.com) на обоих телефонах/ПК → `ssh -p 8022 user@100.x.x.x`.
+
+На удалённой машине: те же команды диагностики + `bash scripts/start-all.sh`.
+
+AI-агент в Cursor **не подключается** к чужому телефону напрямую — нужен SSH/Tailscale и человек, который выполнит команды (или вы сами по SSH).

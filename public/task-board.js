@@ -47,6 +47,8 @@ const ttState = {
   roleMenu: null,
   refreshTimer: null,
   workerPoll: null,
+  stackPoll: null,
+  stackOk: true,
   agentActiveTaskId: null,
   editingCommentId: null,
   commentEditDrafts: {},
@@ -1252,6 +1254,44 @@ async function ttPollWorkerStatus() {
       ttApplyAgentWorkingUi();
     }
   } catch (_) {}
+}
+
+function ttRenderStackBanner(st) {
+  const el = document.getElementById('tt-stack-banner');
+  if (!el) return;
+  const ttOk = st?.tt?.ok !== false;
+  const workerOk = st?.worker?.running !== false;
+  ttState.stackOk = ttOk;
+  if (ttOk && workerOk) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  const parts = [];
+  if (!ttOk) parts.push('Task Tracker (:3100) не запущен — задачи не сохраняются');
+  if (!workerOk) parts.push('AI-воркер (:9080) не запущен');
+  el.textContent = parts.join(' · ') + '. Нажмите 🔄 или перезапустите node server.js';
+  el.hidden = false;
+}
+
+async function ttPollStackStatus() {
+  try {
+    const r = await fetch('/api/stack/status');
+    const data = await r.json();
+    ttRenderStackBanner(data);
+    return data;
+  } catch (_) {
+    ttRenderStackBanner({ tt: { ok: false }, worker: { running: false } });
+    return null;
+  }
+}
+
+function ttStartStackPoll() {
+  if (ttState.stackPoll) return;
+  ttPollStackStatus();
+  ttState.stackPoll = setInterval(() => {
+    ttPollStackStatus().catch(() => {});
+  }, TT.workerPollMs);
 }
 
 function ttStartWorkerPoll() {
@@ -3615,6 +3655,7 @@ function ttInitTaskBoard() {
   document.getElementById('tt-editor-wrap')?.classList.add('visible');
   ttStartAutoRefresh();
   ttStartWorkerPoll();
+  ttStartStackPoll();
   ttLoadTasks().catch(() => {});
 
   const showAllCb = document.getElementById('tt-show-all');
@@ -3749,7 +3790,10 @@ function ttInitTaskBoard() {
       btn.disabled = false;
       btn.textContent = '🔄';
       // Give the web server a moment to come back, then refresh status.
-      setTimeout(() => { ttPollWorkerStatus().catch(() => {}); }, 4000);
+      setTimeout(() => {
+        ttPollWorkerStatus().catch(() => {});
+        ttPollStackStatus().catch(() => {});
+      }, 4000);
     }
   });
 
