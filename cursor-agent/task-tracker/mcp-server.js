@@ -414,9 +414,19 @@ function updateComment(taskIdOrRef, commentId, updates) {
     comment = hits.length === 1 ? hits[0] : null;
   }
   if (!comment) return null;
+  const now = new Date().toISOString();
   if (updates.text !== undefined) comment.text = String(updates.text || '').trim();
-  if (updates.author !== undefined) comment.author = updates.author;
-  comment.updated_at = new Date().toISOString();
+  if (updates.author !== undefined && updates.author !== comment.author) {
+    if (!Array.isArray(comment.author_history)) comment.author_history = [];
+    comment.author_history.push({
+      from: comment.author,
+      to: updates.author,
+      actor: updates.actor || 'system',
+      at: now,
+    });
+    comment.author = updates.author;
+  }
+  comment.updated_at = now;
   task.updated_at = comment.updated_at;
   writeFileSync(taskFilePath(taskId), JSON.stringify(task, null, 2));
   log(`COMMENT_EDIT ${taskId}/${comment.id}`);

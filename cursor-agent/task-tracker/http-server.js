@@ -666,7 +666,16 @@ function updateComment(taskIdOrRef, commentId, updates) {
     if (updates.text !== undefined) comment.text = nextText;
   }
 
-  if (updates.author !== undefined) comment.author = updates.author;
+  if (updates.author !== undefined && updates.author !== comment.author) {
+    if (!Array.isArray(comment.author_history)) comment.author_history = [];
+    comment.author_history.push({
+      from: comment.author,
+      to: updates.author,
+      actor: updates.actor || 'system',
+      at: now,
+    });
+    comment.author = updates.author;
+  }
 
   if (isRestore) {
     comment.restored_from = updates.restored_from;

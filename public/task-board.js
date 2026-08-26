@@ -2446,6 +2446,24 @@ function ttRenderHandoffLine(c) {
   return el;
 }
 
+function ttRenderAuthorChangeLine(entry) {
+  const el = document.createElement('div');
+  el.className = 'tt-handoff-line';
+  const when = entry.at ? ttFormatDate(entry.at) : '';
+  const actor = entry.actor || '—';
+  const from = entry.from || '—';
+  const to = entry.to || '—';
+  el.textContent = `${actor} поменял автора: ${from} → ${to}${when ? ` · ${when}` : ''}`;
+  return el;
+}
+
+function ttAppendAuthorChangeHistory(container, comment, showAll) {
+  if (!showAll || !Array.isArray(comment.author_history) || !comment.author_history.length) return;
+  for (const entry of comment.author_history) {
+    container.appendChild(ttRenderAuthorChangeLine(entry));
+  }
+}
+
 function ttCommentVersionBlocks(comment, showAll) {
   const versions = [];
   if (showAll && Array.isArray(comment.history) && comment.history.length) {
@@ -2675,6 +2693,7 @@ function ttRenderComments(task) {
         ttBindMonoCtxMenu(ta);
         const authorEl = block.querySelector('.tt-comment-author');
         if (authorEl) ttBindCommentAuthorCtxMenu(authorEl, task, c);
+        ttAppendAuthorChangeHistory(block, c, showAll);
         requestAnimationFrame(() => {
           if (!ta) return;
           const s = ttState.commentEditSelStart;
@@ -2689,6 +2708,7 @@ function ttRenderComments(task) {
         versions.forEach((ver, idx) => {
           block.appendChild(ttRenderCommentVersionEl(task, c, ver, idx === versions.length - 1, showAll));
         });
+        ttAppendAuthorChangeHistory(block, c, showAll);
         if (!c.deleted) {
           block.addEventListener('contextmenu', (e) => {
             e.preventDefault();
