@@ -967,30 +967,15 @@ async function ttLoadProjectList() {
   }
 }
 
-function ttRenderProjectMove(task) {
-  const group = document.getElementById('tt-project-move-group');
-  const sel = document.getElementById('tt-project-move-select');
-  const btn = document.getElementById('tt-project-move-btn');
-  if (!group || !sel || !btn || !task) return;
-  const owner = ttIsTaskOwner(task);
-  group.style.display = owner ? '' : 'none';
-  if (!owner) return;
+function ttProjectMoveTargets(task) {
+  if (!task) return [];
   const current = task.project || ttActiveProject();
-  const targets = (ttState.projectList.length ? ttState.projectList : [current])
+  return (ttState.projectList.length ? ttState.projectList : [current])
     .filter((slug) => slug && slug !== current);
-  sel.innerHTML = '';
-  for (const slug of targets) {
-    const opt = document.createElement('option');
-    opt.value = slug;
-    opt.textContent = `${ttProjectLabel(slug)} (${slug})`;
-    sel.appendChild(opt);
-  }
-  btn.disabled = targets.length === 0;
 }
 
-async function ttDoMoveProject(taskId) {
+async function ttDoMoveProject(taskId, target) {
   const task = ttGetTask(taskId);
-  const target = document.getElementById('tt-project-move-select')?.value;
   if (!task || !target || target === task.project) return;
   if (!ttIsTaskOwner(task)) {
     ttNotify('Только текущий исполнитель может перенести задачу', 'system');
@@ -2749,7 +2734,6 @@ function ttRenderDetail(task, opts = {}) {
 
   ttRenderComments(task);
   ttUpdateTransferButtons(task);
-  ttRenderProjectMove(task);
 
   const manualActions = document.getElementById('tt-detail-manual-actions');
   if (manualActions) manualActions.hidden = !canManage;
@@ -2811,6 +2795,88 @@ function ttUpdateTransferButtons(task) {
   });
   const closeBtn = document.getElementById('tt-close-task-btn');
   if (closeBtn) closeBtn.disabled = !canHandoff;
+}
+
+function ttOpenDetailHeadCtxMenu(e, task) {
+  if (!task || !ttIsTaskOwner(task)) return;
+  ttCloseCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'tt-ctx-menu open';
+  const x = e.clientX || e.touches?.[0]?.clientX || 40;
+  const y = e.clientY || e.touches?.[0]?.clientY || 40;
+  menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 200)}px`;
+
+  const label = document.createElement('div');
+  label.className = 'tt-ctx-label';
+  label.textContent = 'Перенести в проект…';
+  menu.appendChild(label);
+
+  const targets = ttProjectMoveTargets(task);
+  if (!targets.length) {
+    const empty = document.createElement('button');
+    empty.type = 'button';
+    empty.disabled = true;
+    empty.textContent = 'Нет других проектов';
+    menu.appendChild(empty);
+  } else {
+    for (const slug of targets) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = `${ttProjectLabel(slug)} (${slug})`;
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ttCloseCtxMenu();
+        ttDoMoveProject(task.id, slug).catch(() => {});
+      });
+      menu.appendChild(btn);
+    }
+  }
+
+  document.body.appendChild(menu);
+  ttState.ctxMenu = menu;
+  const onPointerDown = (ev) => {
+    if (menu.contains(ev.target)) return;
+    ttCloseCtxMenu();
+  };
+  const onKeyDown = (ev) => {
+    if (ev.key === 'Escape') ttCloseCtxMenu();
+  };
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+  }, 0);
+  ttState.ctxMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('keydown', onKeyDown);
+  };
+}
+
+function ttBindDetailHeadCtxMenu() {
+  const head = document.querySelector('.tt-detail-head');
+  if (!head || head.dataset.ctxBound) return;
+  head.dataset.ctxBound = '1';
+  const open = (e) => {
+    if (e.target.closest('.tt-close-btn, .tt-ghost-btn, button, a, input, textarea, select')) return;
+    const task = ttGetTask(ttState.detailTaskId);
+    if (!task) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ttOpenDetailHeadCtxMenu(e, task);
+  };
+  head.addEventListener('contextmenu', open);
+  let pressTimer = null;
+  head.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.tt-close-btn, .tt-ghost-btn, button, a, input, textarea, select')) return;
+    pressTimer = setTimeout(() => {
+      const task = ttGetTask(ttState.detailTaskId);
+      if (!task) return;
+      ttOpenDetailHeadCtxMenu(e, task);
+    }, 550);
+  }, { passive: true });
+  head.addEventListener('touchend', () => { clearTimeout(pressTimer); });
+  head.addEventListener('touchmove', () => { clearTimeout(pressTimer); });
 }
 
 function ttOpenCommentCtxMenu(e, task, comment) {
@@ -3622,9 +3688,7 @@ function ttInitTaskBoard() {
   });
 
   document.getElementById('tt-detail-close')?.addEventListener('click', ttCloseDetail);
-  document.getElementById('tt-project-move-btn')?.addEventListener('click', () => {
-    if (ttState.detailTaskId) ttDoMoveProject(ttState.detailTaskId);
-  });
+  ttBindDetailHeadCtxMenu();
   document.getElementById('tt-transfer-close')?.addEventListener('click', ttCloseTransferPopup);
   document.getElementById('tt-transfer-cancel')?.addEventListener('click', ttCloseTransferPopup);
 

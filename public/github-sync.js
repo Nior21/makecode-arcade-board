@@ -277,6 +277,7 @@ async function mcLoadProjects(opts = {}) {
 
 function mcOpenProjectPopup() {
   document.getElementById('mc-project-overlay')?.classList.add('open');
+  if (typeof ttPopupHistoryPush === 'function') ttPopupHistoryPush('mc-project-overlay');
   mcRenderProjectList({ loadingRemote: true });
   mcRefreshGhStatus().catch(() => {});
   mcRefreshCursorStatus().catch(() => {});
@@ -288,8 +289,12 @@ function mcOpenProjectPopup() {
     });
 }
 
-function mcCloseProjectPopup() {
+function mcCloseProjectPopup(opts = {}) {
+  const wasOpen = document.getElementById('mc-project-overlay')?.classList.contains('open');
   document.getElementById('mc-project-overlay')?.classList.remove('open');
+  if (wasOpen && !opts.skipHistory && typeof ttPopupHistoryPop === 'function') {
+    ttPopupHistoryPop(opts.fromPopstate);
+  }
 }
 
 function mcRenderBoardProjectRow(host) {
