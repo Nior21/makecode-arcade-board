@@ -1,0 +1,14 @@
+{
+  "name": "task-tracker",
+  "version": "1.0.0",
+  "description": "MCP-сервер для системы заявок/задач. LLM-дружественное хранение, flat JSON.",
+  "main": "mcp-server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node mcp-server.js",
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:rpi": "bash scripts/deploy.sh pi@192.168.88.153"
+  },
+  "keywords": ["mcp", "tasks", "tickets", "llm"],
+  "license": "ISC"
+}

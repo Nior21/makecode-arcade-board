@@ -1,0 +1,18 @@
+{
+  "name": "tt-agent-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LAN webhook worker: TT assignee→AI_Agent → Cursor SDK local (single-flight, RPI-safe)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --max-old-space-size=192 src/server.js",
+    "dry-run": "TT_WORKER_DRY_RUN=1 node --max-old-space-size=192 src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cursor/sdk": "^1.0.6"
+  }
+}
