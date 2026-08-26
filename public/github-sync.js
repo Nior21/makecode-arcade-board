@@ -301,9 +301,15 @@ function mcRenderBoardProjectRow(host) {
   const st = MC.boardStatus || {};
   const ver = st.version ? ` · ${st.version}` : '';
   const linkHint = st.linked ? `${st.linked.owner}/${st.linked.repo}` : 'GitHub не привязан';
+  let syncHint = '';
+  if (st.ahead > 0) {
+    syncHint = ` · ⚠ +${st.ahead} не на GitHub${st.remoteVersion ? ` (remote ${st.remoteVersion})` : ''}`;
+  } else if (st.behind > 0) {
+    syncHint = ` · ↓${st.behind} на GitHub`;
+  }
   const row = document.createElement('div');
   row.className = 'mc-project-row' + (mcIsBoardProject(MC.activeSlug) ? ' active' : '');
-  row.innerHTML = `<span class="mc-project-name">${escapeHtml(mcBoardLabel(st.version))}</span><span class="mc-project-slug">${escapeHtml(MC_BOARD_PROJECT)}${escapeHtml(ver)} · ${escapeHtml(linkHint)}</span>`;
+  row.innerHTML = `<span class="mc-project-name">${escapeHtml(mcBoardLabel(st.version))}</span><span class="mc-project-slug">${escapeHtml(MC_BOARD_PROJECT)}${escapeHtml(ver)} · ${escapeHtml(linkHint)}${escapeHtml(syncHint)}</span>`;
   const actions = document.createElement('div');
   actions.className = 'mc-project-actions';
   const select = document.createElement('button');
@@ -331,8 +337,11 @@ function mcRenderBoardProjectRow(host) {
   pull.addEventListener('click', () => mcDoBoardPull());
   const push = document.createElement('button');
   push.type = 'button';
-  push.className = 'mc-btn secondary';
-  push.textContent = 'Push';
+  push.className = 'mc-btn secondary' + (st.ahead > 0 ? ' mc-btn-warn' : '');
+  push.textContent = st.ahead > 0 ? `Push (+${st.ahead})` : 'Push';
+  push.title = st.ahead > 0
+    ? `На GitHub ${st.remoteVersion || '?'} — локально ${st.ahead} коммит(ов) не запушено`
+    : 'Push на GitHub';
   push.addEventListener('click', () => mcDoBoardPush());
   actions.append(linkBtn, pull, push);
   row.appendChild(actions);
@@ -448,8 +457,10 @@ async function mcDoBoardPull() {
       const from = result.previousVersion && result.previousVersion !== result.version
         ? ` · было ${result.previousVersion}` : '';
       mcNotify(`✓ Обновлено до ${result.version}${from} (+${result.commitsPulled || '?'} комм.)`);
+    } else if (result.hint) {
+      mcNotify(`⚠ ${result.hint} — нажмите Push`);
     } else {
-      mcNotify(`✓ Уже актуально (${result.version || '?'})${result.ahead ? ' · есть локальные коммиты' : ''}`);
+      mcNotify(`✓ Уже актуально (${result.version || '?'})`);
     }
     await mcRefreshBoardStatus();
     mcRenderProjectList();
