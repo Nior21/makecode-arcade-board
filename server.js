@@ -9,6 +9,7 @@ const { createSupervisor } = require('./scripts/flash-supervisor.js');
 const gh = require('./lib/github-sync.js');
 const board = require('./lib/board-sync.js');
 const cursorAuth = require('./lib/cursor-auth.js');
+const remoteSupport = require('./lib/remote-support.js');
 
 const PORT = process.env.MC_PORT || 3778;
 const TT_BASE = process.env.TT_BASE_URL || 'http://127.0.0.1:3100';
@@ -572,6 +573,71 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/cursor/logout' && req.method === 'POST') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(cursorAuth.clearCursorKey()));
+    return;
+  }
+
+  // Техподдержка (Quick Assist): клиент вводит код от помощника → временный SSH.
+  if (pathname === '/api/support/client/start' && req.method === 'POST') {
+    remoteSupport.startClientMode(fetchStackStatus).then((result) => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+    }).catch((err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    });
+    return;
+  }
+  if (pathname === '/api/support/client/authorize' && req.method === 'POST') {
+    parseJsonBody(req).then(async (body) => {
+      const result = await remoteSupport.authorizeClient(body.code, fetchStackStatus);
+      res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+    }).catch((err) => {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+  if (pathname === '/api/support/client/stop' && req.method === 'POST') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(remoteSupport.stopClientSession('user')));
+    return;
+  }
+  if (pathname === '/api/support/client/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(remoteSupport.getClientStatus()));
+    return;
+  }
+  if (pathname === '/api/support/client/diagnostics' && req.method === 'POST') {
+    remoteSupport.rerunDiagnostics(fetchStackStatus).then((result) => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
+    }).catch((err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    });
+    return;
+  }
+  if (pathname === '/api/support/helper/start' && req.method === 'POST') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(remoteSupport.startHelperSession()));
+    return;
+  }
+  if (pathname === '/api/support/helper/connect' && req.method === 'POST') {
+    parseJsonBody(req).then((body) => {
+      const sess = remoteSupport.getHelperSession(body.code);
+      if (!sess.ok) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(sess));
+        return;
+      }
+      const ssh = remoteSupport.buildSshCommand(body.user, body.host, sess.code);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, ...sess, ssh });
+    }).catch((err) => {
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
     return;
   }
 

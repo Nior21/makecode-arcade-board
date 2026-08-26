@@ -28,3 +28,4 @@ cursor-agent/tt-agent-worker/queue-state.json
 cursor-agent/tt-agent-worker/*.pid
 cursor-agent/tt-agent-worker.log
 cursor-agent/**/node_modules/
+.support/

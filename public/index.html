@@ -189,6 +189,22 @@
   .mc-gh-error { font-size: 12px; color: #fca5a5; min-height: 1.2em; }
   .mc-btn:disabled { opacity: 0.55; pointer-events: none; }
   .mc-popup-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 4px; }
+  .mc-support-code-box {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-align: center;
+    padding: 16px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    color: #fde68a;
+    margin: 8px 0;
+  }
+  .mc-support-issues { margin: 6px 0 6px 18px; color: #fca5a5; font-size: 12px; }
+  .mc-support-issues li { margin: 2px 0; }
+  .mc-support-panel { margin-top: 10px; }
+  .mc-support-panel[hidden] { display: none !important; }
 </style>
 </head>
 <body>
@@ -244,6 +260,47 @@
           <div class="mc-gh-error" id="mc-board-repo-error" aria-live="polite"></div>
           <div class="mc-popup-actions">
             <button type="button" class="mc-btn" id="mc-board-repo-save">Сохранить</button>
+          </div>
+        </div>
+      </details>
+      <details class="mc-gh-inline" id="mc-support-inline">
+        <summary id="mc-support-inline-summary">Техподдержка — удалённый доступ</summary>
+        <div class="mc-gh-form">
+          <p class="mc-gh-hint">Как в Windows Quick Assist: <strong>помощник</strong> генерирует код и диктует его клиенту. Клиент вводит код → временный SSH (30 мин).</p>
+          <div class="mc-popup-actions">
+            <button type="button" class="mc-btn" id="mc-support-client-start">Техподдержка</button>
+            <button type="button" class="mc-btn secondary" id="mc-support-helper-start">Помочь</button>
+          </div>
+          <div id="mc-support-client-panel" class="mc-support-panel" hidden>
+            <div class="mc-gh-status-line" id="mc-support-client-status">—</div>
+            <div id="mc-support-client-diag"></div>
+            <div id="mc-support-client-auth">
+              <label for="mc-support-client-code">Код от помощника (6 цифр)</label>
+              <input type="text" id="mc-support-client-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="123456">
+              <div class="mc-popup-actions">
+                <button type="button" class="mc-btn" id="mc-support-client-submit">Разрешить доступ</button>
+                <button type="button" class="mc-btn secondary" id="mc-support-client-rediag">Диагностика</button>
+              </div>
+            </div>
+            <div id="mc-support-client-active" class="mc-support-panel" hidden>
+              <div id="mc-support-client-active-info"></div>
+              <button type="button" class="mc-btn secondary" id="mc-support-client-stop">Завершить сессию</button>
+            </div>
+            <div class="mc-gh-error" id="mc-support-client-error" aria-live="polite"></div>
+          </div>
+          <div id="mc-support-helper-panel" class="mc-support-panel" hidden>
+            <p class="mc-gh-hint">Продиктуйте этот код клиенту:</p>
+            <div class="mc-support-code-box" id="mc-support-helper-code">——</div>
+            <div id="mc-support-helper-hint"></div>
+            <label for="mc-support-helper-host">IP клиента (после подтверждения)</label>
+            <input type="text" id="mc-support-helper-host" autocomplete="off" placeholder="192.168.x.x или 100.x.x.x (Tailscale)">
+            <label for="mc-support-helper-user">Логин SSH на клиенте</label>
+            <input type="text" id="mc-support-helper-user" autocomplete="off" placeholder="whoami в Termux клиента">
+            <div class="mc-popup-actions">
+              <button type="button" class="mc-btn" id="mc-support-helper-connect">Команда SSH</button>
+            </div>
+            <div id="mc-support-helper-cmd"></div>
+            <div class="mc-gh-error" id="mc-support-helper-error" aria-live="polite"></div>
           </div>
         </div>
       </details>
@@ -487,6 +544,7 @@ function pushBoardNotif(text, type) {
 </script>
 <script src="task-board.js"></script>
 <script src="github-sync.js"></script>
+<script src="remote-support.js"></script>
 <script>
 function syncAppHeaderOffset() {
   const h = document.getElementById('app-header')?.offsetHeight || 52;
@@ -496,6 +554,7 @@ window.addEventListener('resize', syncAppHeaderOffset);
 document.addEventListener('DOMContentLoaded', () => {
   syncAppHeaderOffset();
   mcInitGithubSync();
+  mcSupportInit();
   ttInitTaskBoard();
   ttOpenBoard();
 });
