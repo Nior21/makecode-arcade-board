@@ -92,6 +92,7 @@ const server = createServer(async (req, res) => {
       maxQueue: config.maxQueue,
       minMemAvailableKb: config.minMemAvailableKb,
       runTimeoutMs: config.runTimeoutMs,
+      watchdogTimeoutMs: config.watchdogTimeoutMs || config.runTimeoutMs,
       dryRun: config.dryRun,
       hasApiKey: !!config.apiKey,
     }});

@@ -49,10 +49,12 @@ export const config = {
   minMemAvailableKb: Math.max(64 * 1024, parseInt(process.env.TT_WORKER_MIN_MEM_KB || String(180 * 1024), 10) || 180 * 1024),
   /** Soft run timeout — best-effort cancel. */
   runTimeoutMs: Math.max(60_000, parseInt(process.env.TT_WORKER_TIMEOUT_MS || String(25 * 60 * 1000), 10) || 25 * 60 * 1000),
-  /** Watchdog force-exit threshold. Defaults to runTimeoutMs; can be set lower
-   *  to detect a hung agent sooner. If the active job runs past this, the
-   *  worker force-exits so the supervisor restarts it. */
-  watchdogTimeoutMs: Math.max(60_000, parseInt(process.env.TT_WORKER_WATCHDOG_MS || '', 10) || 0) || null,
+  /** Watchdog force-exit. Defaults to runTimeoutMs; explicit env min 10 min (avoid 60s kill loops). */
+  watchdogTimeoutMs: (() => {
+    const raw = parseInt(process.env.TT_WORKER_WATCHDOG_MS || '', 10);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.max(10 * 60 * 1000, raw);
+  })(),
   projectCwds: { ...PROJECT_CWDS, ...(parseJsonMap(process.env.TT_WORKER_PROJECT_CWDS)) },
   defaultCwd: process.env.TT_WORKER_DEFAULT_CWD || BOARD_ROOT,
   boardRoot: BOARD_ROOT,
