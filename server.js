@@ -27,13 +27,16 @@ function readDefaultHw() {
 const DEFAULT_HW = readDefaultHw();
 const FLASH_SUPERVISOR_ENABLED = process.env.FLASH_SUPERVISOR !== '0';
 
+// cursor-agent bundled in repo (Pull/Push sync); override via CURSOR_AGENT_DIR
+const CURSOR_AGENT_DIR = process.env.CURSOR_AGENT_DIR || path.join(__dirname, 'cursor-agent');
+
 // Supervisor for the tt-agent-worker. Used by the restart button.
 const WORKER_SUPERVISOR = process.env.WORKER_SUPERVISOR
-  || '/storage/emulated/0/Projects/cursor-agent/tt-agent-worker/supervisor.sh';
+  || path.join(CURSOR_AGENT_DIR, 'tt-agent-worker', 'supervisor.sh');
 const WORKER_BASE = (process.env.TT_WORKER_BASE || 'http://127.0.0.1:9080').replace(/\/$/, '');
 
 // Full-stack restart targets (worker + TT + this web server).
-const TT_DIR = process.env.TT_DIR || '/storage/emulated/0/Projects/cursor-agent/task-tracker';
+const TT_DIR = process.env.TT_DIR || path.join(CURSOR_AGENT_DIR, 'task-tracker');
 const TT_LOG = path.join(TT_DIR, 'logs', 'http.log');
 
 const MIME = {

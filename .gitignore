@@ -16,3 +16,13 @@ socks.txt
 mc_task.json
 webhook_*.json
 task_*.json
+
+# cursor-agent: локальные данные (движок синхронизируется через git)
+cursor-agent/task-tracker/tasks/*
+!cursor-agent/task-tracker/tasks/.gitkeep
+cursor-agent/task-tracker/logs/
+cursor-agent/task-tracker/motivation/
+cursor-agent/task-tracker/.env
+cursor-agent/tt-agent-worker/.env
+cursor-agent/tt-agent-worker/queue-state.json
+cursor-agent/tt-agent-worker/*.pid
