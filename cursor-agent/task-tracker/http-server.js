@@ -427,6 +427,8 @@ function isAgentResultComment(c) {
   const text = c.text || '';
   if (/^↪ Передано:/.test(text)) return false;
   if (/^Агент, передаю/i.test(text)) return false;
+  // Worker finalize bug could post this after a successful run — don't treat as delivery.
+  if (/^⛔ tt-agent-worker ошибка:/.test(text)) return false;
   return true;
 }
 

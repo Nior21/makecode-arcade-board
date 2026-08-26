@@ -158,12 +158,19 @@ export async function runAgentJob(job, { log = console.error } = {}) {
     }
   }
 
-  const finalize = () => finalizeAgentRun(taskId, runMeta, { log });
+  /** finalize must never fail the job — old workers could throw ReferenceError after a successful Agent.prompt. */
+  const safeFinalize = async () => {
+    try {
+      await finalizeAgentRun(taskId, runMeta, { log });
+    } catch (err) {
+      log(`[runner] finalize failed (non-fatal): ${err?.message || err}`);
+    }
+  };
 
   if (config.dryRun) {
     log('[runner] DRY_RUN — skip Agent.prompt');
     await addComment(taskId, 'AI_Agent', 'DRY_RUN: webhook принят, Cursor SDK не вызывался.').catch(() => {});
-    await finalize();
+    await safeFinalize();
     return { dryRun: true };
   }
 
@@ -172,14 +179,14 @@ export async function runAgentJob(job, { log = console.error } = {}) {
       'Нет CURSOR_API_KEY на RPI. Положите ключ в /home/pi/tt-agent-worker/.env и перезапустите tt-agent-worker.';
     log(`[runner] ${msg}`);
     await addComment(taskId, 'AI_Agent', `⛔ ${msg}`).catch(() => {});
-    await finalize();
+    await safeFinalize();
     return { error: 'no_api_key' };
   }
 
   if (!mem.ok) {
     const msg = `Мало RAM (${mem.memAvailableMiB}MiB) — отложите задачу или освободите память.`;
     await addComment(taskId, 'AI_Agent', `⛔ ${msg}`).catch(() => {});
-    await finalize();
+    await safeFinalize();
     throw new Error(msg);
   }
 
@@ -217,7 +224,7 @@ export async function runAgentJob(job, { log = console.error } = {}) {
 
     const status = result?.status || 'unknown';
     log(`[runner] finished status=${status}`);
-    await finalize();
+    await safeFinalize();
     // Agent posts its own TT comment via MCP; skip auto-summary to avoid duplicates.
     return { status, result };
   } catch (err) {
@@ -226,7 +233,7 @@ export async function runAgentJob(job, { log = console.error } = {}) {
       : String(err?.message || err);
     log(`[runner] fail: ${msg}`);
     await addComment(taskId, 'AI_Agent', `⛔ tt-agent-worker ошибка: ${msg}`).catch(() => {});
-    await finalize();
+    await safeFinalize();
     throw err;
   } finally {
     clearTimeout(timer);
