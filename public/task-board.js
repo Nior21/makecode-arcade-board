@@ -3726,27 +3726,30 @@ function ttInitTaskBoard() {
     ttApplyListMode();
   });
 
-  // Restart the AI worker (tt-agent-worker) if it hangs.
+  // Restart everything (worker + TT + web server) if something hangs.
   document.getElementById('tt-worker-restart')?.addEventListener('click', async () => {
     const btn = document.getElementById('tt-worker-restart');
     if (!btn || btn.disabled) return;
     btn.disabled = true;
     btn.textContent = '⏳';
-    ttNotify('Перезапуск AI-воркера…', 'system');
+    ttNotify('Перезапуск всего (воркер + ТТ + веб-сервер)…', 'system');
     try {
       const r = await fetch('/api/worker/restart', { method: 'POST' });
       const data = await r.json().catch(() => ({}));
       if (r.ok && data.ok) {
-        ttNotify('✅ AI-воркер перезапущен', 'success');
-        ttPollWorkerStatus().catch(() => {});
+        ttNotify('✅ Перезапуск запущен, веб-сервер перезагружается…', 'success');
       } else {
         ttNotify('⚠️ Ошибка перезапуска: ' + (data.output || data.error || r.status), 'error');
       }
     } catch (err) {
-      ttNotify('⚠️ Не удалось перезапустить: ' + err.message, 'error');
+      // The web server kills itself during the restart, so the fetch may abort
+      // mid-flight. That's expected — the restart is still in progress.
+      ttNotify('🔄 Перезапуск запущен, веб-сервер перезагружается…', 'system');
     } finally {
       btn.disabled = false;
       btn.textContent = '🔄';
+      // Give the web server a moment to come back, then refresh status.
+      setTimeout(() => { ttPollWorkerStatus().catch(() => {}); }, 4000);
     }
   });
 

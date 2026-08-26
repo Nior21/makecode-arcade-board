@@ -3,7 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { waitForFlash, probeMounts, writeStatus, STATUS_FILE } = require('./scripts/flash-wait.js');
 const { createSupervisor } = require('./scripts/flash-supervisor.js');
 const gh = require('./lib/github-sync.js');
@@ -31,6 +31,10 @@ const FLASH_SUPERVISOR_ENABLED = process.env.FLASH_SUPERVISOR !== '0';
 const WORKER_SUPERVISOR = process.env.WORKER_SUPERVISOR
   || '/storage/emulated/0/Projects/cursor-agent/tt-agent-worker/supervisor.sh';
 const WORKER_BASE = (process.env.TT_WORKER_BASE || 'http://127.0.0.1:9080').replace(/\/$/, '');
+
+// Full-stack restart targets (worker + TT + this web server).
+const TT_DIR = process.env.TT_DIR || '/storage/emulated/0/Projects/cursor-agent/task-tracker';
+const TT_LOG = path.join(TT_DIR, 'logs', 'http.log');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -225,16 +229,69 @@ function fetchWorkerHealth() {
   });
 }
 
+// Restart the task-tracker (TT, port 3100): kill the current http-server.js
+// process and start a fresh one. TT now loads its webhook config from `.env`,
+// so no env vars are needed here.
+function restartTT() {
+  return new Promise((resolve) => {
+    // Kill the current TT process (if any), then start a fresh one detached.
+    execFile('bash', ['-c', "pkill -f 'node http-server.js' 2>/dev/null; sleep 1; true"], { timeout: 10000 }, (err) => {
+      const child = spawn('bash', ['-c', `cd '${TT_DIR}' && node http-server.js >> '${TT_LOG}' 2>&1`], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      resolve({
+        ok: true,
+        stdout: `TT restarted (pid ${child.pid})`,
+        stderr: err ? err.message : '',
+        error: null,
+      });
+    });
+  });
+}
+
+// Restart this web server itself. Must be called AFTER the HTTP response has
+// been sent. Spawns a detached process that kills the current server (its own
+// parent) and starts a fresh `node server.js` from the project dir.
+function spawnWebServerRestart() {
+  const script = [
+    `sleep 1`,
+    `kill -TERM ${process.pid} 2>/dev/null || true`,
+    `sleep 1`,
+    `kill -KILL ${process.pid} 2>/dev/null || true`,
+    `cd '${__dirname}' && node server.js >> server.log 2>&1 &`,
+  ].join('; ');
+  const child = spawn('bash', ['-c', script], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+}
+
 const server = http.createServer((req, res) => {
   const pathname = req.url.split('?')[0];
 
   // Worker restart / status — used by the task-board restart button.
   if (pathname === '/api/worker/restart' && req.method === 'POST') {
-    // Restart the worker, then make sure the detached watch loop is running so
-    // it stays alive across future crashes/hangs.
-    Promise.all([runSupervisor(['restart']), runSupervisor(['ensure-watch'])]).then(([r, w]) => {
+    // Full-stack restart: worker + TT + this web server. Restart the worker
+    // and TT first so the response can report their status, then send the
+    // response and restart the web server itself in the background.
+    Promise.all([
+      runSupervisor(['restart']),
+      runSupervisor(['ensure-watch']),
+      restartTT(),
+    ]).then(([r, w, tt]) => {
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ ok: r.ok, output: r.stdout || r.stderr || r.error, watch: w.stdout || w.stderr || w.error }));
+      res.end(JSON.stringify({
+        ok: r.ok,
+        output: r.stdout || r.stderr || r.error,
+        watch: w.stdout || w.stderr || w.error,
+        tt: tt.stdout || tt.stderr || tt.error,
+        web: 'restarting',
+      }));
+      // Restart the web server itself after the response is flushed.
+      spawnWebServerRestart();
     });
     return;
   }
