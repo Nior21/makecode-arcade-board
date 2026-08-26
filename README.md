@@ -77,6 +77,18 @@ curl -X POST http://127.0.0.1:3778/api/board/pull
 curl http://127.0.0.1:3778/api/board/status
 ```
 
+<details>
+<summary>«Warning: redirecting to …» при git pull</summary>
+
+Это **не ошибка**. Git сообщает, что URL в `remote.origin.url` не совпадает с каноническим адресом GitHub (часто `.git` в конце или лишний `/`), сервер делает HTTP-редирект, pull при этом проходит.
+
+**Already up to date** — успех: локальная ветка уже содержит все коммиты с GitHub. Новых правок нет.
+
+Если ожидали обновление — сравните `git log -1 --oneline` с [репозиторием](https://github.com/Nior21/makecode-arcade-board). После Pull нажмите **🔄** (перезапуск процессов).
+
+Кнопка **Pull** в UI нормализует URL автоматически. Вручную: `git remote set-url origin https://github.com/Nior21/makecode-arcade-board`
+</details>
+
 ## Миграция со старой схемы (cursor-agent рядом с репо)
 
 Если заявки лежали в `../cursor-agent/task-tracker/tasks/`:

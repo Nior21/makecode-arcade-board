@@ -444,7 +444,13 @@ async function mcDoBoardPull() {
   try {
     mcNotify('Pull Система заявок…');
     const result = await mcApi('/api/board/pull', { method: 'POST', body: '{}' });
-    mcNotify(`✓ ${result.message} (${result.version || ''})`);
+    if (result.updated) {
+      const from = result.previousVersion && result.previousVersion !== result.version
+        ? ` · было ${result.previousVersion}` : '';
+      mcNotify(`✓ Обновлено до ${result.version}${from} (+${result.commitsPulled || '?'} комм.)`);
+    } else {
+      mcNotify(`✓ Уже актуально (${result.version || '?'})${result.ahead ? ' · есть локальные коммиты' : ''}`);
+    }
     await mcRefreshBoardStatus();
     mcRenderProjectList();
   } catch (err) {
