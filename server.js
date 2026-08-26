@@ -39,6 +39,98 @@ const WORKER_BASE = (process.env.TT_WORKER_BASE || 'http://127.0.0.1:9080').repl
 // Full-stack restart targets (worker + TT + this web server).
 const TT_DIR = process.env.TT_DIR || path.join(CURSOR_AGENT_DIR, 'task-tracker');
 const TT_LOG = path.join(TT_DIR, 'logs', 'http.log');
+const TT_PORT = parseInt(process.env.TT_PORT || '3100', 10);
+let ttLastRestartAt = 0;
+
+function tailFile(filePath, lines = 40) {
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const buf = fs.readFileSync(filePath, 'utf8');
+    return buf.split('\n').slice(-lines).join('\n').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function runShell(script, timeout = 15000) {
+  return new Promise((resolve) => {
+    execFile('bash', ['-c', script], { timeout }, (err, stdout, stderr) => {
+      resolve({
+        ok: !err,
+        stdout: String(stdout || '').trim(),
+        stderr: String(stderr || '').trim(),
+        error: err ? err.message : null,
+      });
+    });
+  });
+}
+
+function waitForTTHealth(maxMs = 8000, intervalMs = 400) {
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const tick = () => {
+      fetchTTHealth().then((h) => {
+        if (h.ok || Date.now() - start >= maxMs) resolve(h);
+        else setTimeout(tick, intervalMs);
+      });
+    };
+    tick();
+  });
+}
+
+/** Free port 3100 — stale listeners survive pkill on Termux. */
+function freeTTPort() {
+  const port = TT_PORT;
+  return runShell([
+    `pkill -f '${TT_DIR.replace(/'/g, "'\\''")}/http-server.js' 2>/dev/null || true`,
+    `pkill -f 'node http-server.js' 2>/dev/null || true`,
+    `fuser -k ${port}/tcp 2>/dev/null || true`,
+    `for pid in $(ss -tlnp 2>/dev/null | grep ':${port}' | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | sort -u); do`,
+    `  kill -9 "$pid" 2>/dev/null || true`,
+    `done`,
+    `sleep 1`,
+    `(ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ':${port}' && echo busy || echo free`,
+  ].join('; '));
+}
+
+/** One-shot TT start probe — captures stderr when detached spawn fails silently. */
+function probeTTStart(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(path.join(TT_DIR, 'http-server.js'))) {
+      resolve({ ok: false, error: 'http-server.js missing', output: '' });
+      return;
+    }
+    const safeDir = TT_DIR.replace(/'/g, "'\\''");
+    const child = spawn('bash', ['-c', `cd '${safeDir}' && node http-server.js 2>&1`], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish({
+        ok: /listening on port/i.test(output),
+        output: output.slice(-1200),
+        error: /listening on port/i.test(output) ? null : (output.trim() || 'no output'),
+      });
+    }, timeoutMs);
+    child.on('exit', (code) => {
+      finish({
+        ok: false,
+        output: output.slice(-1200),
+        error: output.trim() || `exit ${code}`,
+      });
+    });
+  });
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -268,12 +360,13 @@ function fetchStackStatus() {
 /** Start TT + worker if not already up (fresh clone often runs only node server.js). */
 function ensureStackRunning() {
   if (process.env.MC_NO_AUTOSTART === '1') return Promise.resolve();
-  return fetchStackStatus().then((st) => {
+  // After web 🔄, give TT from the prior restartTT() time to bind before pkill again.
+  return waitForTTHealth(5000).then((ttHealth) => fetchStackStatus().then((st) => {
     const jobs = [];
-    if (!st.tt.ok) {
+    if (!st.tt.ok && !ttHealth.ok) {
       console.log('[makecode-arcade] task-tracker offline — starting…');
       jobs.push(restartTT().then((r) => {
-        console.log('[makecode-arcade]', r.stdout || r.error || 'TT start requested');
+        console.log('[makecode-arcade]', r.ok ? r.stdout : (r.error || r.stdout || 'TT start failed'));
       }));
     }
     if (!st.worker.running) {
@@ -284,31 +377,75 @@ function ensureStackRunning() {
       );
     }
     return Promise.all(jobs);
-  }).catch((err) => {
+  })).catch((err) => {
     console.error('[makecode-arcade] autostart failed:', err.message);
   });
 }
 
-// Restart the task-tracker (TT, port 3100): kill the current http-server.js
-// process and start a fresh one. TT now loads its webhook config from `.env`,
-// so no env vars are needed here.
-function restartTT() {
-  return new Promise((resolve) => {
-    // Kill the current TT process (if any), then start a fresh one detached.
-    execFile('bash', ['-c', "pkill -f 'node http-server.js' 2>/dev/null; sleep 1; true"], { timeout: 10000 }, (err) => {
-      const child = spawn('bash', ['-c', `cd '${TT_DIR}' && node http-server.js >> '${TT_LOG}' 2>&1`], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.unref();
-      resolve({
-        ok: true,
-        stdout: `TT restarted (pid ${child.pid})`,
-        stderr: err ? err.message : '',
-        error: null,
+function collectTTDiagnostics() {
+  return freeTTPort().then((portCheck) => ({
+    ttDir: TT_DIR,
+    ttDirExists: fs.existsSync(TT_DIR),
+    httpServerExists: fs.existsSync(path.join(TT_DIR, 'http-server.js')),
+    tasksDirExists: fs.existsSync(path.join(TT_DIR, 'tasks')),
+    logTail: tailFile(TT_LOG, 50),
+    portCheck: portCheck.stdout || portCheck.stderr,
+    lastRestartAt: ttLastRestartAt || null,
+  }));
+}
+
+// Restart the task-tracker (TT, port 3100): kill stale listeners, start fresh, verify health.
+function restartTT({ force } = {}) {
+  if (!fs.existsSync(TT_DIR)) {
+    return Promise.resolve({ ok: false, error: `TT_DIR not found: ${TT_DIR}` });
+  }
+  if (!fs.existsSync(path.join(TT_DIR, 'http-server.js'))) {
+    return Promise.resolve({ ok: false, error: `http-server.js missing in ${TT_DIR}` });
+  }
+
+  const sinceRestart = Date.now() - ttLastRestartAt;
+  if (!force && sinceRestart < 8000 && sinceRestart > 0) {
+    return waitForTTHealth(8000 - sinceRestart).then((h) => ({
+      ok: !!h.ok,
+      stdout: h.ok ? 'TT already up' : 'TT still starting…',
+      error: h.ok ? null : (h.error || 'timeout'),
+    }));
+  }
+
+  ttLastRestartAt = Date.now();
+  fs.mkdirSync(path.join(TT_DIR, 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(TT_DIR, 'tasks'), { recursive: true });
+
+  const safeDir = TT_DIR.replace(/'/g, "'\\''");
+  const safeLog = TT_LOG.replace(/'/g, "'\\''");
+
+  return freeTTPort().then(() => new Promise((resolve) => {
+    const child = spawn('bash', ['-c', `cd '${safeDir}' && exec node http-server.js >> '${safeLog}' 2>&1`], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    const spawnPid = child.pid;
+    waitForTTHealth(10000).then((health) => {
+      if (health.ok) {
+        resolve({
+          ok: true,
+          stdout: `TT restarted (spawn pid ${spawnPid})`,
+          error: null,
+        });
+        return;
+      }
+      probeTTStart(3500).then((probe) => {
+        resolve({
+          ok: false,
+          stdout: `TT spawn pid ${spawnPid}`,
+          error: health.error || probe.error || 'TT did not respond on :3100',
+          probe: probe.output || null,
+          logTail: tailFile(TT_LOG, 30),
+        });
       });
     });
-  });
+  }));
 }
 
 // Restart this web server itself. Must be called AFTER the HTTP response has
@@ -340,14 +477,16 @@ const server = http.createServer((req, res) => {
     Promise.all([
       runSupervisor(['restart']),
       runSupervisor(['ensure-watch']),
-      restartTT(),
+      restartTT({ force: true }),
     ]).then(([r, w, tt]) => {
-      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.writeHead(r.ok && tt.ok ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({
         ok: r.ok,
         output: r.stdout || r.stderr || r.error,
         watch: w.stdout || w.stderr || w.error,
         tt: tt.stdout || tt.stderr || tt.error,
+        ttOk: !!tt.ok,
+        ttDetail: tt.error || null,
         web: 'restarting',
       }));
       // Restart the web server itself after the response is flushed.
@@ -359,6 +498,20 @@ const server = http.createServer((req, res) => {
     fetchStackStatus().then((st) => {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(st));
+    });
+    return;
+  }
+  if (pathname === '/api/stack/diagnostics' && req.method === 'GET') {
+    Promise.all([fetchStackStatus(), collectTTDiagnostics(), probeTTStart(2500)]).then(([stack, ttInfo, probe]) => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ stack, tt: ttInfo, probe }));
+    });
+    return;
+  }
+  if (pathname === '/api/stack/repair-tt' && req.method === 'POST') {
+    restartTT({ force: true }).then((result) => {
+      res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(result));
     });
     return;
   }
@@ -578,7 +731,7 @@ const server = http.createServer((req, res) => {
 
   // Техподдержка (Quick Assist): клиент вводит код от помощника → временный SSH.
   if (pathname === '/api/support/client/start' && req.method === 'POST') {
-    remoteSupport.startClientMode(fetchStackStatus).then((result) => {
+    remoteSupport.startClientMode(fetchStackStatus, restartTT).then((result) => {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     }).catch((err) => {
@@ -589,7 +742,7 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === '/api/support/client/authorize' && req.method === 'POST') {
     parseJsonBody(req).then(async (body) => {
-      const result = await remoteSupport.authorizeClient(body.code, fetchStackStatus);
+      const result = await remoteSupport.authorizeClient(body.code, fetchStackStatus, restartTT);
       res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     }).catch((err) => {
@@ -609,7 +762,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (pathname === '/api/support/client/diagnostics' && req.method === 'POST') {
-    remoteSupport.rerunDiagnostics(fetchStackStatus).then((result) => {
+    remoteSupport.rerunDiagnostics(fetchStackStatus, restartTT).then((result) => {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     }).catch((err) => {

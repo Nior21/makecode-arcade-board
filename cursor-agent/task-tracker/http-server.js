@@ -1419,6 +1419,11 @@ const server = createServer((req, res) => {
 
 if (!existsSync(TASKS_DIR)) mkdirSync(TASKS_DIR, { recursive: true });
 
+server.on('error', (err) => {
+  log(`FATAL listen: ${err.code || ''} ${err.message}`);
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   log(`HTTP MCP server listening on port ${PORT}`);
 });
