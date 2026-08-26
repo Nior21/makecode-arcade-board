@@ -14,6 +14,21 @@ function visibleComments(task) {
   return (task?.comments || []).filter(c => !c.deleted);
 }
 
+function isHandoffComment(c) {
+  const text = c?.text || '';
+  return /^↪ Передано:/.test(text) || /^Агент, передаю/i.test(text);
+}
+
+/** Reuse an existing start ping if the run was interrupted (worker restart). */
+function findReusableStartComment(task) {
+  const comments = visibleComments(task);
+  if (comments.some(c => c.author === 'AI_Agent' && !isAgentStartComment(c) && !isHandoffComment(c))) {
+    return null;
+  }
+  const starts = comments.filter(isAgentStartComment);
+  return starts.length ? starts[starts.length - 1] : null;
+}
+
 function buildPrompt(payload, liveTask) {
   const base = readFileSync(PROMPT_PATH, 'utf8');
   const task = liveTask || payload.task || {};
@@ -113,17 +128,34 @@ export async function runAgentJob(job, { log = console.error } = {}) {
 
   let startCommentId = null;
   const runMeta = { startCommentId: null, startedAt };
-  try {
-    const beforeStart = liveTask || await getTask(taskId).catch(() => null);
-    const afterStart = await addComment(taskId, 'AI_Agent', startNote, {
-      composed_from: startedAt,
-      composed_to: startedAt,
-    });
-    const startComment = findNewComment(beforeStart, afterStart);
-    startCommentId = startComment?.id || null;
+  const reusable = findReusableStartComment(liveTask);
+  if (reusable?.id) {
+    startCommentId = reusable.id;
     runMeta.startCommentId = startCommentId;
-  } catch (err) {
-    log(`[runner] start comment failed: ${err.message}`);
+    runMeta.startedAt = reusable.composed_from || reusable.created_at || startedAt;
+    log(`[runner] reuse start comment ${String(startCommentId).slice(0, 8)}`);
+    try {
+      await updateComment(taskId, startCommentId, {
+        text: startNote,
+        composed_from: runMeta.startedAt,
+        composed_to: new Date().toISOString(),
+      });
+    } catch (err) {
+      log(`[runner] refresh start comment failed: ${err.message}`);
+    }
+  } else {
+    try {
+      const beforeStart = liveTask || await getTask(taskId).catch(() => null);
+      const afterStart = await addComment(taskId, 'AI_Agent', startNote, {
+        composed_from: startedAt,
+        composed_to: startedAt,
+      });
+      const startComment = findNewComment(beforeStart, afterStart);
+      startCommentId = startComment?.id || null;
+      runMeta.startCommentId = startCommentId;
+    } catch (err) {
+      log(`[runner] start comment failed: ${err.message}`);
+    }
   }
 
   const finalize = () => finalizeAgentRun(taskId, runMeta, { log });

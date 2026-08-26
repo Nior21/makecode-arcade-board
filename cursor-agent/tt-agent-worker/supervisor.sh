@@ -18,8 +18,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 # Keep the log in the parent dir to match the existing manual-start convention.
 LOG="$(dirname "$DIR")/tt-agent-worker.log"
 PIDFILE="$DIR/tt-agent-worker.pid"
+QUEUE_STATE="$DIR/queue-state.json"
 NODE_BIN="$(command -v node || echo node)"
 WORKER_CMD=(node --max-old-space-size=192 src/server.js)
+# Grace while Agent.prompt holds the worker (avoid restart loops + duplicate starts).
+BUSY_GRACE_SEC="${TT_WORKER_BUSY_GRACE_SEC:-1800}"
 
 # How long to wait for a graceful stop before SIGKILL.
 STOP_GRACE=8
@@ -50,6 +53,21 @@ is_running() {
   local pid
   pid="$(pid_of)"
   [ -n "$pid" ]
+}
+
+# True when queue-state.json shows a recent active job (worker likely busy, not hung).
+worker_recently_busy() {
+  [ -f "$QUEUE_STATE" ] || return 1
+  "$NODE_BIN" -e "
+    const fs=require('fs');
+    try {
+      const d=JSON.parse(fs.readFileSync('$QUEUE_STATE','utf8'));
+      const a=d.active;
+      if(!a||!a.startedAt) process.exit(1);
+      const age=(Date.now()-new Date(a.startedAt).getTime())/1000;
+      process.exit(age<$BUSY_GRACE_SEC?0:1);
+    } catch { process.exit(1); }
+  " 2>/dev/null
 }
 
 start() {
@@ -130,11 +148,15 @@ watch() {
     if ! is_running; then
       log "worker not running — restarting"
       start
-    elif ! curl -sf -m 2 "http://127.0.0.1:9080/health" >/dev/null 2>&1; then
-      log "worker unresponsive — killing and restarting"
-      stop
-      sleep 1
-      start
+    elif ! curl -sf -m 8 "http://127.0.0.1:9080/health" >/dev/null 2>&1; then
+      if worker_recently_busy; then
+        log "worker health timeout but active job < ${BUSY_GRACE_SEC}s — skip kill"
+      else
+        log "worker unresponsive — killing and restarting"
+        stop
+        sleep 1
+        start
+      fi
     fi
     sleep 10
   done

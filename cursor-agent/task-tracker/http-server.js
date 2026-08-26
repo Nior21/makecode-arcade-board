@@ -430,30 +430,61 @@ function isAgentResultComment(c) {
   return true;
 }
 
-/** Re-fire webhook for open tasks assigned to AI_Agent without a worker run. */
-function recoverOrphanAgentTasks() {
+const WORKER_HEALTH_URL = process.env.TT_WORKER_HEALTH_URL || 'http://127.0.0.1:9080/health';
+
+async function fetchWorkerQueueState() {
+  try {
+    const res = await fetch(WORKER_HEALTH_URL, { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function workerHasTask(health, taskId) {
+  if (!health?.queue || !taskId) return false;
+  if (health.queue.active?.taskId === taskId) return true;
+  return (health.queue.queued || []).some(j => j.taskId === taskId);
+}
+
+/** Re-fire webhook for open AI_Agent tasks without a completed worker run. */
+async function recoverOrphanAgentTasks() {
   const cfg = webhookConfig();
   if (!cfg.enabled) return { recovered: 0, reason: 'webhook disabled' };
+  const workerHealth = await fetchWorkerQueueState();
   const index = loadIndex();
   let recovered = 0;
+  let skippedBusy = 0;
   for (const id of index.tasks) {
     const task = getTask(id);
     if (!task || task.deleted) continue;
     if (task.assignee !== cfg.assignee) continue;
     if (!['open', 'in_progress'].includes(task.status)) continue;
     const comments = (task.comments || []).filter(c => !c.deleted);
-    if (comments.some(isAgentStartComment)) continue;
     if (comments.some(isAgentResultComment)) continue;
+    if (workerHasTask(workerHealth, task.id)) {
+      skippedBusy++;
+      continue;
+    }
+    const hasStart = comments.some(isAgentStartComment);
+    if (hasStart) {
+      const starts = comments.filter(isAgentStartComment);
+      const newest = starts[starts.length - 1];
+      const ageMs = Date.now() - new Date(newest.created_at || 0).getTime();
+      if (ageMs < 120_000) continue;
+      log(`RECOVER stuck ${task.id.split('-')[0]} — worker idle, re-firing webhook`);
+    }
     maybeNotifyAssigneeToAgent({
       task,
       prevAssignee: null,
-      actor: 'orphan-recovery',
+      actor: hasStart ? 'stuck-recovery' : 'orphan-recovery',
       isCreate: true,
     }, log);
     recovered++;
-    log(`RECOVER orphan ${task.id.split('-')[0]} — ${task.title}`);
+    if (!hasStart) log(`RECOVER orphan ${task.id.split('-')[0]} — ${task.title}`);
   }
-  return { recovered };
+  return { recovered, skippedBusy };
 }
 
 function replayAgentWebhook(taskRef) {
@@ -1502,8 +1533,12 @@ server.listen(PORT, '0.0.0.0', () => {
   const cfg = webhookConfig();
   log(`Webhook ${cfg.enabled ? 'enabled' : 'disabled'} → ${cfg.url || '(none)'}`);
   setTimeout(() => {
-    const rec = recoverOrphanAgentTasks();
-    if (rec.recovered) log(`Orphan recovery: ${rec.recovered} task(s) re-queued for agent`);
+    recoverOrphanAgentTasks()
+      .then((rec) => {
+        if (rec.recovered) log(`Orphan recovery: ${rec.recovered} task(s) re-queued for agent`);
+        if (rec.skippedBusy) log(`Orphan recovery: ${rec.skippedBusy} skipped (worker busy)`);
+      })
+      .catch(err => log(`Orphan recovery failed: ${err.message}`));
   }, 1500);
   log(`HTTP MCP server listening on port ${PORT}`);
 });
